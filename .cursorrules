@@ -1,0 +1,350 @@
+# Cursor Rules for Risk Monitor Project
+
+## Project Context
+This is a **Distributed Real-Time Fixed Income & Derivatives Risk Engine** built with:
+- Event-driven architecture (Apache Kafka)
+- Microservices pattern (Docker Compose)
+- Python 3.11+ for all services
+- QuantLib for pricing
+- PostgreSQL, Redis for data storage
+
+**Current Phase:** Phase 1 - Infrastructure Setup  
+**Design Status:** ✅ Approved (see docs/design/System_Design_Document.md)
+
+---
+
+## Code Style & Standards
+
+### Python
+- Use Python 3.11+ features
+- Type hints required for all functions
+- Docstrings: Google style format
+- Formatting: Black (line length 100)
+- Linting: Flake8
+- Import sorting: isort
+
+### Example Function
+```python
+def calculate_dv01(instrument: ql.Instrument, quotes: dict[str, ql.SimpleQuote]) -> float:
+    """
+    Calculate Dollar Value of 1 Basis Point for an instrument.
+    
+    Args:
+        instrument: QuantLib instrument to price
+        quotes: Mapping of tenor to mutable quote objects
+    
+    Returns:
+        DV01 in base currency
+        
+    Raises:
+        ValueError: If instrument cannot be priced
+    """
+    base_npv = instrument.NPV()
+    # ... implementation
+    return dv01
+```
+
+### File Organization
+```
+service_name/
+├── app/
+│   ├── __init__.py
+│   ├── main.py           # Entry point
+│   ├── models.py         # Data models
+│   ├── schemas.py        # Pydantic schemas (if API)
+│   ├── services/         # Business logic
+│   └── utils/            # Helpers
+├── tests/
+│   ├── __init__.py
+│   ├── test_models.py
+│   └── test_services.py
+├── Dockerfile
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## Architecture Constraints
+
+### DO (Approved Design)
+✅ Use Kafka for event streaming  
+✅ Stateless risk workers (cache portfolio in-memory)  
+✅ QuantLib for all pricing calculations  
+✅ FastAPI for REST APIs  
+✅ Redis for risk aggregation cache  
+✅ Docker Compose for orchestration  
+✅ Python generators for data replay  
+
+### DON'T (Not in Approved Design)
+❌ Use other message queues (RabbitMQ, Redis Pub/Sub)  
+❌ Make risk workers stateful  
+❌ Implement custom pricing (use QuantLib)  
+❌ Use Flask or Django (FastAPI only)  
+❌ Use MongoDB or other NoSQL (PostgreSQL for persistence)  
+❌ Load entire files into memory (use generators)  
+
+---
+
+## Implementation Guidelines
+
+### Phase-by-Phase Approach
+1. Always check `START_HERE.md` for current phase
+2. Read phase implementation doc before coding
+3. Follow step-by-step instructions
+4. Test each component before moving on
+5. Update progress in START_HERE.md
+
+### Backend-First Order
+```
+Infrastructure → Database → API → Processing → UI
+```
+
+### Testing Requirements
+- Unit tests: 80% coverage minimum
+- Integration tests: Happy path + error cases
+- Run tests before committing: `pytest tests/ -v`
+
+### Git Commits
+- Conventional Commits format: `feat:`, `fix:`, `docs:`, `test:`
+- Examples:
+  - `feat(api): add bond creation endpoint`
+  - `fix(pricing): handle negative rates in curve`
+  - `test(feed): add generator pattern tests`
+
+---
+
+## Key Architectural Patterns
+
+### 1. Event-Driven (Kafka)
+```python
+# Producer pattern
+def produce_market_data(message: dict):
+    producer.produce(
+        topic="yield_curve_ticks",
+        key=message["curve_type"],
+        value=json.dumps(message)
+    )
+    producer.flush()
+
+# Consumer pattern
+for message in consumer:
+    data = json.loads(message.value())
+    process_market_update(data)
+    consumer.commit()
+```
+
+### 2. Stateless Workers
+```python
+# On startup: load portfolio once
+portfolio = load_portfolio_from_api()
+
+# On each message: process using cached portfolio
+def process_tick(market_data: dict):
+    update_curves(market_data)
+    for inst_id, instrument in portfolio.items():
+        risk = calculate_risk(instrument)
+        publish_to_redis(inst_id, risk)
+```
+
+### 3. Cache-Aside (Redis)
+```python
+# Write
+redis.hset(f"trade:{id}:risk", mapping={
+    "dv01": str(dv01),
+    "npv": str(npv),
+    "timestamp": str(int(time.time() * 1000))
+})
+redis.expire(f"trade:{id}:risk", 3600)  # 1 hour TTL
+
+# Read
+risk = redis.hgetall(f"trade:{id}:risk")
+```
+
+---
+
+## Common Pitfalls to Avoid
+
+### QuantLib
+❌ **Don't:** Create new curves on every tick  
+✅ **Do:** Update SimpleQuote objects, curves auto-recalibrate
+
+❌ **Don't:** `curve = ql.PiecewiseLogCubicDiscount(...)` in event loop  
+✅ **Do:** `quote.setValue(new_rate)` to update existing curve
+
+### Kafka
+❌ **Don't:** Auto-commit offsets (may lose data)  
+✅ **Do:** Manual commit after successful processing
+
+❌ **Don't:** Produce without flush  
+✅ **Do:** `producer.flush()` to ensure delivery
+
+### Redis
+❌ **Don't:** Store floats directly (precision loss)  
+✅ **Do:** Convert to string: `str(12500.45)`
+
+❌ **Don't:** Forget TTL on transient data  
+✅ **Do:** `redis.expire(key, 3600)`
+
+---
+
+## Performance Targets
+
+| Metric | Target | How to Measure |
+|--------|--------|----------------|
+| End-to-end latency | <100ms P95 | Timestamp tracking Kafka→Redis |
+| Curve bootstrapping | <10ms | QuantLib profiling |
+| Bond pricing | <1ms | Per-instrument timing |
+| Risk worker throughput | 100 inst/sec | Benchmark with sample portfolio |
+| API response (GET) | <50ms | HTTP logging |
+
+**If targets not met:**
+1. Profile with `cProfile` or `py-spy`
+2. Check for inefficient loops
+3. Verify Redis/Kafka not bottleneck
+4. Consider QuantLib optimization
+
+---
+
+## Error Handling Standards
+
+### Kafka Consumer
+```python
+try:
+    for message in consumer:
+        process_message(message)
+        consumer.commit()
+except KafkaException as e:
+    logger.error(f"Kafka error: {e}")
+    # Retry logic here
+except Exception as e:
+    logger.error(f"Processing error: {e}")
+    # Log but continue (don't stop consumer)
+```
+
+### QuantLib Pricing
+```python
+try:
+    npv = instrument.NPV()
+except RuntimeError as e:
+    logger.error(f"QuantLib pricing failed for {inst_id}: {e}")
+    # Store error sentinel value
+    redis.hset(f"trade:{inst_id}:risk", "error", str(e))
+```
+
+### API Endpoints
+```python
+@app.post("/api/v1/instruments/bonds")
+def create_bond(bond: BondCreate):
+    try:
+        # Validation happens via Pydantic
+        db_bond = create_bond_in_db(bond)
+        return db_bond
+    except IntegrityError:
+        raise HTTPException(400, "Bond with this ISIN already exists")
+    except Exception as e:
+        logger.error(f"Failed to create bond: {e}")
+        raise HTTPException(500, "Internal server error")
+```
+
+---
+
+## Documentation Requirements
+
+### Every Module
+```python
+"""
+Module: market_data_feed.py
+Purpose: Replay historical yield curves into Kafka
+
+This module implements a Python generator pattern to stream market data
+from CSV files into Kafka with configurable replay speed.
+
+Key components:
+- market_data_generator(): Generator yielding snapshots
+- produce_to_kafka(): Kafka producer logic
+"""
+```
+
+### Every Class/Function
+- Docstring with Google format
+- Type hints on all parameters and returns
+- Examples for complex functions
+
+### README per Service
+```markdown
+# Service Name
+
+## Purpose
+One-line description
+
+## Dependencies
+- Service A (startup)
+- Service B (runtime)
+
+## Configuration
+ENV_VAR_1: Description (default: value)
+
+## Running
+docker-compose up service-name
+
+## Testing
+pytest tests/
+```
+
+---
+
+## Quick Reference Commands
+
+```bash
+# Start development
+docker-compose up -d
+
+# Run tests
+pytest tests/ -v --cov
+
+# Format code
+black . && isort .
+
+# Lint
+flake8 .
+
+# Type check
+mypy .
+
+# Check service health
+curl http://localhost:8000/health
+
+# View logs
+docker-compose logs -f [service-name]
+```
+
+---
+
+## When Stuck
+
+1. **Check design docs:** `docs/design/System_Design_Document.md`
+2. **Review decisions:** `docs/design/Architecture_Decision_Records.md`
+3. **Read phase doc:** `docs/implementation/Phase_X_*.md`
+4. **Ask specific questions** with context
+
+---
+
+## Remember
+
+🎯 **Goal:** Build production-grade risk system demonstrating:
+- Event-driven architecture
+- Microservices patterns
+- Quantitative finance expertise
+- Real-time data processing
+
+✅ **Design is approved** - follow it closely  
+🔄 **Backend-first** - infrastructure → API → processing → UI  
+📊 **Measure everything** - latency, throughput, accuracy  
+🧪 **Test continuously** - don't accumulate tech debt  
+
+---
+
+**Last Updated:** 2026-01-28  
+**Current Phase:** Phase 1 - Infrastructure  
+**Next:** Create Phase 1 implementation document
