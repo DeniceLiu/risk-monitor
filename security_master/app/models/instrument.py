@@ -62,6 +62,7 @@ class Instrument(Base):
     instrument_type = Column(String(10), nullable=False)
     notional = Column(Numeric(18, 2), nullable=False)
     currency = Column(String(3), nullable=False, default="USD")
+    portfolio_id = Column(String(50), nullable=True)  # FK constraint exists in DB
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 

@@ -32,6 +32,7 @@ def instrument_to_response(instrument: Instrument) -> InstrumentResponse:
         "instrument_type": instrument.instrument_type,
         "notional": instrument.notional,
         "currency": instrument.currency,
+        "portfolio_id": instrument.portfolio_id,
         "created_at": instrument.created_at,
         "updated_at": instrument.updated_at,
     }
@@ -80,6 +81,7 @@ def create_bond(bond_data: BondCreate, db: Session = Depends(get_db)) -> BondRes
         instrument_type="BOND",
         notional=bond_data.notional,
         currency=bond_data.currency,
+        portfolio_id=bond_data.portfolio_id,
     )
     db.add(instrument)
     db.flush()  # Get the instrument ID
@@ -108,6 +110,7 @@ def create_bond(bond_data: BondCreate, db: Session = Depends(get_db)) -> BondRes
         issue_date=bond.issue_date,
         payment_frequency=bond.payment_frequency,
         day_count_convention=bond.day_count_convention,
+        portfolio_id=instrument.portfolio_id,
         created_at=instrument.created_at,
         updated_at=instrument.updated_at,
     )

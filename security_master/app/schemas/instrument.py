@@ -53,6 +53,7 @@ class BondCreate(BaseModel):
     issue_date: Optional[date] = Field(default=None, description="Bond issue date")
     payment_frequency: PaymentFrequency = Field(default=PaymentFrequency.SEMI_ANNUAL)
     day_count_convention: DayCountConvention = Field(default=DayCountConvention.ACT_ACT)
+    portfolio_id: Optional[str] = Field(default=None, description="Portfolio ID for grouping")
 
     @field_validator("isin")
     @classmethod
@@ -83,6 +84,7 @@ class BondResponse(BaseModel):
     issue_date: Optional[date]
     payment_frequency: str
     day_count_convention: str
+    portfolio_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -149,6 +151,7 @@ class InstrumentResponse(BaseModel):
     instrument_type: str
     notional: Decimal
     currency: str
+    portfolio_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
