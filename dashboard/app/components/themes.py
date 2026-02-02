@@ -70,7 +70,7 @@ class ThemeManager:
     def __init__(self):
         """Initialize theme manager."""
         if "theme" not in st.session_state:
-            st.session_state.theme = "dark"
+            st.session_state.theme = "light"
 
     def render_toggle(self):
         """Render theme toggle in sidebar."""
@@ -78,8 +78,8 @@ class ThemeManager:
 
         theme = st.sidebar.radio(
             "Select Theme",
-            options=["Dark", "Light"],
-            index=0 if st.session_state.theme == "dark" else 1,
+            options=["Light", "Dark"],
+            index=0 if st.session_state.theme == "light" else 1,
             horizontal=True,
         )
 

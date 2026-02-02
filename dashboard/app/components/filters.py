@@ -9,23 +9,30 @@ from typing import Tuple, Dict, Any
 class PortfolioFilters:
     """Manages dashboard filters."""
 
+    DEFAULT_FILTERS = {
+        "currencies": ["USD"],
+        "instrument_types": ["BOND", "SWAP"],
+        "maturity_min": 0,
+        "maturity_max": 30,
+        "dv01_min": 0,
+    }
+
     def __init__(self):
         """Initialize filter state."""
-        if "filters" not in st.session_state:
-            st.session_state.filters = {
-                "currencies": ["USD"],
-                "instrument_types": ["BOND", "SWAP"],
-                "maturity_min": 0,
-                "maturity_max": 30,
-                "dv01_min": 0,
-            }
+        # Applied filters (used for actual filtering)
+        if "applied_filters" not in st.session_state:
+            st.session_state.applied_filters = self.DEFAULT_FILTERS.copy()
+
+        # Pending filters (current UI selections, not yet applied)
+        if "pending_filters" not in st.session_state:
+            st.session_state.pending_filters = self.DEFAULT_FILTERS.copy()
 
     def render_sidebar(self) -> Dict[str, Any]:
         """
         Render filter controls in sidebar.
 
         Returns:
-            dict: Current filter selections
+            dict: Currently applied filter selections
         """
         st.sidebar.header("Filters")
 
@@ -33,7 +40,7 @@ class PortfolioFilters:
         currencies = st.sidebar.multiselect(
             "Currency",
             options=["USD", "EUR", "GBP", "JPY"],
-            default=st.session_state.filters["currencies"],
+            default=st.session_state.pending_filters["currencies"],
             help="Select one or more currencies to display",
         )
 
@@ -41,7 +48,7 @@ class PortfolioFilters:
         instrument_types = st.sidebar.multiselect(
             "Instrument Type",
             options=["BOND", "SWAP"],
-            default=st.session_state.filters["instrument_types"],
+            default=st.session_state.pending_filters["instrument_types"],
             help="Filter by instrument type",
         )
 
@@ -52,8 +59,8 @@ class PortfolioFilters:
             min_value=0,
             max_value=30,
             value=(
-                st.session_state.filters["maturity_min"],
-                st.session_state.filters["maturity_max"],
+                st.session_state.pending_filters["maturity_min"],
+                st.session_state.pending_filters["maturity_max"],
             ),
             help="Filter by years remaining to maturity",
         )
@@ -62,13 +69,13 @@ class PortfolioFilters:
         dv01_min = st.sidebar.number_input(
             "Min DV01 to Display ($)",
             min_value=0,
-            value=st.session_state.filters["dv01_min"],
+            value=st.session_state.pending_filters["dv01_min"],
             step=1000,
             help="Only show trades with DV01 above this threshold",
         )
 
-        # Update session state
-        filters = {
+        # Update pending filters with current selections
+        st.session_state.pending_filters = {
             "currencies": currencies if currencies else ["USD"],
             "instrument_types": instrument_types if instrument_types else ["BOND", "SWAP"],
             "maturity_min": maturity_range[0],
@@ -76,20 +83,32 @@ class PortfolioFilters:
             "dv01_min": dv01_min,
         }
 
-        st.session_state.filters = filters
+        # Check if pending differs from applied
+        filters_changed = st.session_state.pending_filters != st.session_state.applied_filters
 
-        # Reset button
-        if st.sidebar.button("Reset Filters"):
-            st.session_state.filters = {
-                "currencies": ["USD"],
-                "instrument_types": ["BOND", "SWAP"],
-                "maturity_min": 0,
-                "maturity_max": 30,
-                "dv01_min": 0,
-            }
-            st.rerun()
+        # Apply and Reset buttons
+        col1, col2 = st.sidebar.columns(2)
 
-        return filters
+        with col1:
+            if st.button(
+                "Apply Filters",
+                type="primary" if filters_changed else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state.applied_filters = st.session_state.pending_filters.copy()
+                st.rerun()
+
+        with col2:
+            if st.button("Reset", use_container_width=True):
+                st.session_state.pending_filters = self.DEFAULT_FILTERS.copy()
+                st.session_state.applied_filters = self.DEFAULT_FILTERS.copy()
+                st.rerun()
+
+        # Show indicator if filters are pending
+        if filters_changed:
+            st.sidebar.caption("*Filters changed - click Apply to update*")
+
+        return st.session_state.applied_filters
 
     def render_date_selector(self) -> Tuple[datetime, datetime]:
         """
