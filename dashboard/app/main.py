@@ -75,6 +75,9 @@ def render_sidebar(fetcher: RiskDataFetcher, aggregates, trades_df: pd.DataFrame
     alert_manager = RiskAlerts()
     alert_manager.configure_limits()
 
+    # Apply All / Reset All buttons (unified for filters, date range, and risk limits)
+    filters_manager.render_apply_buttons()
+
     st.sidebar.divider()
 
     # Export section

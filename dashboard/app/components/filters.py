@@ -17,6 +17,12 @@ class PortfolioFilters:
         "dv01_min": 0,
     }
 
+    DEFAULT_DATE_RANGE = {
+        "preset": "Last Hour",
+        "custom_start": None,
+        "custom_end": None,
+    }
+
     def __init__(self):
         """Initialize filter state."""
         # Applied filters (used for actual filtering)
@@ -26,6 +32,14 @@ class PortfolioFilters:
         # Pending filters (current UI selections, not yet applied)
         if "pending_filters" not in st.session_state:
             st.session_state.pending_filters = self.DEFAULT_FILTERS.copy()
+
+        # Applied date range
+        if "applied_date_range" not in st.session_state:
+            st.session_state.applied_date_range = self.DEFAULT_DATE_RANGE.copy()
+
+        # Pending date range
+        if "pending_date_range" not in st.session_state:
+            st.session_state.pending_date_range = self.DEFAULT_DATE_RANGE.copy()
 
     def render_sidebar(self) -> Dict[str, Any]:
         """
@@ -83,31 +97,6 @@ class PortfolioFilters:
             "dv01_min": dv01_min,
         }
 
-        # Check if pending differs from applied
-        filters_changed = st.session_state.pending_filters != st.session_state.applied_filters
-
-        # Apply and Reset buttons
-        col1, col2 = st.sidebar.columns(2)
-
-        with col1:
-            if st.button(
-                "Apply Filters",
-                type="primary" if filters_changed else "secondary",
-                use_container_width=True,
-            ):
-                st.session_state.applied_filters = st.session_state.pending_filters.copy()
-                st.rerun()
-
-        with col2:
-            if st.button("Reset", use_container_width=True):
-                st.session_state.pending_filters = self.DEFAULT_FILTERS.copy()
-                st.session_state.applied_filters = self.DEFAULT_FILTERS.copy()
-                st.rerun()
-
-        # Show indicator if filters are pending
-        if filters_changed:
-            st.sidebar.caption("*Filters changed - click Apply to update*")
-
         return st.session_state.applied_filters
 
     def render_date_selector(self) -> Tuple[datetime, datetime]:
@@ -115,7 +104,7 @@ class PortfolioFilters:
         Render date range selector.
 
         Returns:
-            Tuple of (start_date, end_date)
+            Tuple of (start_date, end_date) from applied settings
         """
         st.sidebar.subheader("Date Range")
 
@@ -123,36 +112,110 @@ class PortfolioFilters:
         preset = st.sidebar.selectbox(
             "Quick Select",
             ["Last Hour", "Last 6 Hours", "Last 24 Hours", "Last 7 Days", "Custom"],
+            index=["Last Hour", "Last 6 Hours", "Last 24 Hours", "Last 7 Days", "Custom"].index(
+                st.session_state.pending_date_range.get("preset", "Last Hour")
+            ),
         )
 
         now = datetime.now()
+        custom_start = None
+        custom_end = None
 
-        if preset == "Last Hour":
-            start_date = now - timedelta(hours=1)
-            end_date = now
-        elif preset == "Last 6 Hours":
-            start_date = now - timedelta(hours=6)
-            end_date = now
-        elif preset == "Last 24 Hours":
-            start_date = now - timedelta(days=1)
-            end_date = now
-        elif preset == "Last 7 Days":
-            start_date = now - timedelta(days=7)
-            end_date = now
-        else:  # Custom
+        if preset == "Custom":
             col1, col2 = st.sidebar.columns(2)
             with col1:
-                start_date_input = st.date_input(
-                    "From", value=now - timedelta(days=7), max_value=now.date()
-                )
+                stored_start = st.session_state.pending_date_range.get("custom_start")
+                default_start = stored_start if stored_start else (now - timedelta(days=7)).date()
+                custom_start = st.date_input("From", value=default_start, max_value=now.date())
             with col2:
-                end_date_input = st.date_input("To", value=now.date(), max_value=now.date())
+                stored_end = st.session_state.pending_date_range.get("custom_end")
+                default_end = stored_end if stored_end else now.date()
+                custom_end = st.date_input("To", value=default_end, max_value=now.date())
 
-            # Convert date to datetime
-            start_date = datetime.combine(start_date_input, datetime.min.time())
-            end_date = datetime.combine(end_date_input, datetime.max.time())
+        # Update pending date range
+        st.session_state.pending_date_range = {
+            "preset": preset,
+            "custom_start": custom_start,
+            "custom_end": custom_end,
+        }
 
-        return start_date, end_date
+        # Return applied date range
+        return self._calculate_date_range(st.session_state.applied_date_range)
+
+    def _calculate_date_range(self, date_config: Dict) -> Tuple[datetime, datetime]:
+        """Calculate actual datetime range from config."""
+        now = datetime.now()
+        preset = date_config.get("preset", "Last Hour")
+
+        if preset == "Last Hour":
+            return now - timedelta(hours=1), now
+        elif preset == "Last 6 Hours":
+            return now - timedelta(hours=6), now
+        elif preset == "Last 24 Hours":
+            return now - timedelta(days=1), now
+        elif preset == "Last 7 Days":
+            return now - timedelta(days=7), now
+        else:  # Custom
+            custom_start = date_config.get("custom_start") or (now - timedelta(days=7)).date()
+            custom_end = date_config.get("custom_end") or now.date()
+            return (
+                datetime.combine(custom_start, datetime.min.time()),
+                datetime.combine(custom_end, datetime.max.time()),
+            )
+
+    def render_apply_buttons(self) -> bool:
+        """
+        Render Apply and Reset buttons.
+
+        Returns:
+            bool: True if settings were just applied
+        """
+        # Check if any pending settings differ from applied
+        filters_changed = st.session_state.pending_filters != st.session_state.applied_filters
+        date_changed = st.session_state.pending_date_range != st.session_state.applied_date_range
+        limits_changed = (
+            st.session_state.get("pending_risk_limits", {})
+            != st.session_state.get("applied_risk_limits", {})
+        )
+
+        any_changed = filters_changed or date_changed or limits_changed
+
+        st.sidebar.divider()
+
+        # Apply and Reset buttons
+        col1, col2 = st.sidebar.columns(2)
+
+        applied = False
+        with col1:
+            if st.button(
+                "Apply All",
+                type="primary" if any_changed else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state.applied_filters = st.session_state.pending_filters.copy()
+                st.session_state.applied_date_range = st.session_state.pending_date_range.copy()
+                if "pending_risk_limits" in st.session_state:
+                    st.session_state.applied_risk_limits = st.session_state.pending_risk_limits.copy()
+                applied = True
+                st.rerun()
+
+        with col2:
+            if st.button("Reset All", use_container_width=True):
+                st.session_state.pending_filters = self.DEFAULT_FILTERS.copy()
+                st.session_state.applied_filters = self.DEFAULT_FILTERS.copy()
+                st.session_state.pending_date_range = self.DEFAULT_DATE_RANGE.copy()
+                st.session_state.applied_date_range = self.DEFAULT_DATE_RANGE.copy()
+                if "pending_risk_limits" in st.session_state:
+                    from .alerts import RiskAlerts
+                    st.session_state.pending_risk_limits = RiskAlerts.DEFAULT_LIMITS.copy()
+                    st.session_state.applied_risk_limits = RiskAlerts.DEFAULT_LIMITS.copy()
+                st.rerun()
+
+        # Show indicator if settings are pending
+        if any_changed:
+            st.sidebar.caption("*Settings changed - click Apply All to update*")
+
+        return applied
 
     def apply_filters(self, df: pd.DataFrame, filters: Dict[str, Any]) -> pd.DataFrame:
         """

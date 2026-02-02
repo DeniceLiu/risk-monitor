@@ -7,14 +7,21 @@ from typing import Dict
 class RiskAlerts:
     """Manages risk limit alerts."""
 
+    DEFAULT_LIMITS = {
+        "dv01_limit": 2_000_000,
+        "npv_limit": 1_000_000_000,
+        "concentration_limit": 0.20,  # 20% max in single trade
+    }
+
     def __init__(self):
         """Initialize with default limits."""
-        if "risk_limits" not in st.session_state:
-            st.session_state.risk_limits = {
-                "dv01_limit": 2_000_000,
-                "npv_limit": 1_000_000_000,
-                "concentration_limit": 0.20,  # 20% max in single trade
-            }
+        # Applied limits (used for actual alerting)
+        if "applied_risk_limits" not in st.session_state:
+            st.session_state.applied_risk_limits = self.DEFAULT_LIMITS.copy()
+
+        # Pending limits (current UI selections, not yet applied)
+        if "pending_risk_limits" not in st.session_state:
+            st.session_state.pending_risk_limits = self.DEFAULT_LIMITS.copy()
 
     def configure_limits(self):
         """Render limit configuration in sidebar."""
@@ -23,7 +30,7 @@ class RiskAlerts:
         dv01_limit = st.sidebar.number_input(
             "DV01 Limit ($)",
             min_value=0,
-            value=st.session_state.risk_limits["dv01_limit"],
+            value=st.session_state.pending_risk_limits["dv01_limit"],
             step=100_000,
             help="Alert when portfolio DV01 exceeds this value",
         )
@@ -31,7 +38,7 @@ class RiskAlerts:
         npv_limit = st.sidebar.number_input(
             "NPV Limit ($)",
             min_value=0,
-            value=st.session_state.risk_limits["npv_limit"],
+            value=st.session_state.pending_risk_limits["npv_limit"],
             step=100_000_000,
             help="Alert when portfolio NPV exceeds this value",
         )
@@ -41,13 +48,14 @@ class RiskAlerts:
                 "Concentration Limit (%)",
                 min_value=0,
                 max_value=100,
-                value=int(st.session_state.risk_limits["concentration_limit"] * 100),
+                value=int(st.session_state.pending_risk_limits["concentration_limit"] * 100),
                 help="Alert when single trade exceeds this % of total DV01",
             )
             / 100
         )
 
-        st.session_state.risk_limits = {
+        # Update pending limits
+        st.session_state.pending_risk_limits = {
             "dv01_limit": dv01_limit,
             "npv_limit": npv_limit,
             "concentration_limit": concentration_limit,
@@ -67,7 +75,8 @@ class RiskAlerts:
         Returns:
             Dict of limit_name: is_breached
         """
-        limits = st.session_state.risk_limits
+        # Use applied limits for checking
+        limits = st.session_state.applied_risk_limits
 
         breaches = {
             "dv01": abs(total_dv01) > limits["dv01_limit"],
@@ -98,7 +107,7 @@ class RiskAlerts:
             max_trade_id: ID of largest trade
         """
         breaches = self.check_limits(total_dv01, total_npv, max_trade_dv01)
-        limits = st.session_state.risk_limits
+        limits = st.session_state.applied_risk_limits
 
         alert_shown = False
 
