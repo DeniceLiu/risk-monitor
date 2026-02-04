@@ -6,6 +6,42 @@ import streamlit as st
 class ThemeManager:
     """Manages dashboard themes."""
 
+    LIVE_INDICATOR_CSS = """
+    <style>
+        .live-banner {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 0.85rem;
+        }
+        .live-banner.live {
+            background: rgba(0, 200, 83, 0.12);
+            color: #00c853;
+            border: 1px solid rgba(0, 200, 83, 0.3);
+        }
+        .live-banner.stale {
+            background: rgba(255, 193, 7, 0.12);
+            color: #ffc107;
+            border: 1px solid rgba(255, 193, 7, 0.3);
+        }
+        .live-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: #00c853;
+            animation: pulse-dot 2s ease-in-out infinite;
+        }
+        @keyframes pulse-dot {
+            0%   { box-shadow: 0 0 0 0 rgba(0,200,83,0.6); }
+            70%  { box-shadow: 0 0 0 8px rgba(0,200,83,0); }
+            100% { box-shadow: 0 0 0 0 rgba(0,200,83,0); }
+        }
+    </style>
+    """
+
     DARK_THEME = """
     <style>
         /* Dark theme styles */
@@ -86,8 +122,9 @@ class ThemeManager:
         st.session_state.theme = theme.lower()
 
     def apply_theme(self):
-        """Apply selected theme."""
+        """Apply selected theme and live indicator styles."""
         if st.session_state.theme == "dark":
             st.markdown(self.DARK_THEME, unsafe_allow_html=True)
         else:
             st.markdown(self.LIGHT_THEME, unsafe_allow_html=True)
+        st.markdown(self.LIVE_INDICATOR_CSS, unsafe_allow_html=True)

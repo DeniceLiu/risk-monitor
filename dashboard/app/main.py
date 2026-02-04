@@ -1,23 +1,24 @@
-"""Risk Monitor Dashboard - Streamlit Application with Enhanced Features."""
+"""Risk Monitor Dashboard V2 - Real-time streaming, table-first layout."""
 
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import streamlit as st
 import pandas as pd
 
 from config import settings
-from data import RiskDataFetcher
+from data import RiskDataFetcher, PortfolioService
 from components.filters import PortfolioFilters
 from components.charts import AdvancedCharts
 from components.alerts import RiskAlerts
 from components.themes import ThemeManager
 from utils.export import ExcelExporter
+from utils.issuer_mapping import extract_issuer_name
 
 
 # Page configuration
 st.set_page_config(
-    page_title="Risk Monitor",
+    page_title="Fixed Income Risk Monitor",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -34,57 +35,61 @@ def format_currency(value: float, decimals: int = 0) -> str:
         return f"${value:,.{decimals}f}"
 
 
-def get_status_indicator(connected: bool, updated_at: int) -> str:
-    """Get status indicator based on connection and freshness."""
+def get_status_indicator(connected: bool, updated_at: int) -> tuple[str, bool]:
+    """Return (label, is_live) for the header badge."""
     if not connected:
-        return "Disconnected"
-
+        return "Disconnected", False
     if updated_at == 0:
-        return "Waiting for data..."
-
+        return "Waiting for data...", False
     age_seconds = (time.time() * 1000 - updated_at) / 1000
     if age_seconds < 10:
-        return "Live"
+        return "Live", True
     elif age_seconds < 60:
-        return f"{int(age_seconds)}s ago"
+        return f"{int(age_seconds)}s ago", False
     else:
-        return f"{int(age_seconds/60)}m ago"
+        return f"{int(age_seconds / 60)}m ago", False
 
 
-def render_sidebar(fetcher: RiskDataFetcher, aggregates, trades_df: pd.DataFrame):
+def render_live_badge(label: str, is_live: bool):
+    """Render the pulsing LIVE / STALE badge in the header."""
+    if is_live:
+        html = (
+            '<div class="live-banner live">'
+            '<div class="live-dot"></div>'
+            f'LIVE STREAMING &nbsp;|&nbsp; {datetime.now().strftime("%H:%M:%S")}'
+            "</div>"
+        )
+    else:
+        html = (
+            '<div class="live-banner stale">'
+            f'DATA {label.upper()} &nbsp;|&nbsp; {datetime.now().strftime("%H:%M:%S")}'
+            "</div>"
+        )
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def render_sidebar(fetcher, aggregates, trades_df, portfolios):
     """Render sidebar with all controls."""
-    # Theme toggle
     theme_manager = ThemeManager()
     theme_manager.render_toggle()
     theme_manager.apply_theme()
 
     st.sidebar.divider()
 
-    # Filters
     filters_manager = PortfolioFilters()
-    active_filters = filters_manager.render_sidebar()
+    active_filters = filters_manager.render_sidebar(portfolios=portfolios)
 
     st.sidebar.divider()
-
-    # Date range selector
     start_date, end_date = filters_manager.render_date_selector()
-
     st.sidebar.divider()
 
-    # Risk limits configuration
     alert_manager = RiskAlerts()
     alert_manager.configure_limits()
-
-    # Apply All / Reset All buttons (unified for filters, date range, and risk limits)
     filters_manager.render_apply_buttons()
 
     st.sidebar.divider()
-
-    # Export section
     st.sidebar.subheader("Export Data")
-
     if aggregates and not trades_df.empty:
-        # Generate Excel file
         excel_file = ExcelExporter.create_portfolio_export(
             trades_df,
             {
@@ -97,7 +102,6 @@ def render_sidebar(fetcher: RiskDataFetcher, aggregates, trades_df: pd.DataFrame
                 "krd_30y": aggregates.krd_30y,
             },
         )
-
         st.sidebar.download_button(
             label="Download Excel Report",
             data=excel_file,
@@ -109,53 +113,63 @@ def render_sidebar(fetcher: RiskDataFetcher, aggregates, trades_df: pd.DataFrame
 
 
 def render_dashboard():
-    """Render the main dashboard."""
-    # Initialize data fetcher
-    fetcher = RiskDataFetcher(settings.redis_host, settings.redis_port)
-
-    # Check connection
+    """Main dashboard renderer — V2 layout."""
+    # ── data layer ──────────────────────────────────────────────────
+    portfolio_service = PortfolioService(settings.security_master_url)
+    fetcher = RiskDataFetcher(
+        settings.redis_host, settings.redis_port, portfolio_service=portfolio_service
+    )
     connected = fetcher.is_connected()
     aggregates = fetcher.get_portfolio_aggregates() if connected else None
-
-    # Get trades data
+    portfolios = portfolio_service.get_portfolios()
     trades_df = fetcher.get_trades_dataframe() if connected else pd.DataFrame()
 
-    # Render sidebar and get settings
+    # ── sidebar ─────────────────────────────────────────────────────
     active_filters, start_date, end_date, alert_manager, filters_manager = render_sidebar(
-        fetcher, aggregates, trades_df
+        fetcher, aggregates, trades_df, portfolios
     )
 
-    # Apply filters to trades
-    if not trades_df.empty:
-        filtered_trades_df = filters_manager.apply_filters(trades_df, active_filters)
-    else:
-        filtered_trades_df = trades_df
+    filtered_trades_df = (
+        filters_manager.apply_filters(trades_df, active_filters)
+        if not trades_df.empty
+        else trades_df
+    )
 
-    # Header
+    selected_portfolio_id = active_filters.get("portfolio", "ALL")
+    selected_portfolio = None
+    if selected_portfolio_id != "ALL":
+        for p in portfolios:
+            if p.id == selected_portfolio_id:
+                selected_portfolio = p
+                break
+
+    # ================================================================
+    # 1. HEADER — title + live badge
+    # ================================================================
     col1, col2 = st.columns([3, 1])
     with col1:
-        st.title("Fixed Income Risk Monitor")
+        title = "Fixed Income Risk Monitor"
+        if selected_portfolio:
+            title = f"Risk Monitor — {selected_portfolio.name}"
+        st.title(title)
     with col2:
         updated_at = aggregates.updated_at if aggregates else 0
-        status = get_status_indicator(connected, updated_at)
+        label, is_live = get_status_indicator(connected, updated_at)
+        render_live_badge(label, is_live)
 
-        if "Live" in status:
-            st.success(f"Status: {status}")
-        elif "Disconnected" in status or "ago" in status:
-            st.warning(f"Status: {status}")
-        else:
-            st.info(f"Status: {status}")
-
-    # Connection error handling
     if not connected:
         st.error("Unable to connect to Redis. Please check the connection.")
         return
-
     if not aggregates:
         st.warning("No risk data available. Waiting for risk engine to publish data...")
         return
 
-    # Risk Alerts section
+    # ── store historical snapshot ───────────────────────────────────
+    fetcher.store_historical_snapshot(aggregates.total_dv01, aggregates.total_npv)
+
+    # ================================================================
+    # 2. RISK ALERTS
+    # ================================================================
     st.divider()
     if not trades_df.empty:
         max_idx = trades_df["DV01"].abs().idxmax()
@@ -164,160 +178,274 @@ def render_dashboard():
     else:
         max_trade_dv01 = 0
         max_trade_id = ""
-
     alert_manager.render_alerts(
         aggregates.total_dv01, aggregates.total_npv, max_trade_dv01, max_trade_id
     )
 
-    # Portfolio Summary
+    # ================================================================
+    # 3. PORTFOLIO SUMMARY METRICS (with deltas)
+    # ================================================================
     st.divider()
-    st.subheader("Portfolio Summary")
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.metric(
-            label="Instruments",
-            value=f"{aggregates.instrument_count}",
+    if not filtered_trades_df.empty:
+        filt_count = len(filtered_trades_df)
+        filt_npv = filtered_trades_df["NPV"].sum()
+        filt_dv01 = filtered_trades_df["DV01"].sum()
+        filt_notional = (
+            filtered_trades_df["Notional"].sum()
+            if "Notional" in filtered_trades_df.columns
+            else 0
         )
+    else:
+        filt_count = aggregates.instrument_count
+        filt_npv = aggregates.total_npv
+        filt_dv01 = aggregates.total_dv01
+        filt_notional = 0
 
-    with col2:
+    # Delta tracking
+    prev_dv01 = st.session_state.get("prev_dv01")
+    prev_npv = st.session_state.get("prev_npv")
+    st.session_state.prev_dv01 = filt_dv01
+    st.session_state.prev_npv = filt_npv
+
+    summary_title = "Portfolio Summary"
+    if selected_portfolio:
+        summary_title = f"Portfolio: {selected_portfolio.name}"
+    st.subheader(summary_title)
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
         st.metric(
-            label="Total NPV",
-            value=format_currency(aggregates.total_npv),
+            "Instruments",
+            f"{filt_count:,}",
+            delta=f"of {aggregates.instrument_count:,} total" if selected_portfolio else None,
         )
-
-    with col3:
-        dv01_color = "inverse" if aggregates.total_dv01 < 0 else "normal"
+    with c2:
         st.metric(
-            label="Total DV01",
-            value=format_currency(aggregates.total_dv01),
-            delta=f"{'Long' if aggregates.total_dv01 > 0 else 'Short'} duration",
-            delta_color=dv01_color,
+            "Total Notional",
+            format_currency(filt_notional) if filt_notional else "N/A",
         )
-
-    with col4:
+    with c3:
+        npv_delta = None
+        if prev_npv is not None:
+            d = filt_npv - prev_npv
+            if abs(d) > 0.5:
+                npv_delta = f"${d:+,.0f}"
+        st.metric("Total NPV", format_currency(filt_npv), delta=npv_delta)
+    with c4:
+        dv01_delta = None
+        if prev_dv01 is not None:
+            d = filt_dv01 - prev_dv01
+            if abs(d) > 0.5:
+                dv01_delta = f"${d:+,.0f}"
+        st.metric(
+            "Total DV01",
+            format_currency(filt_dv01),
+            delta=dv01_delta,
+            delta_color="inverse",
+        )
+    with c5:
         last_update = datetime.fromtimestamp(aggregates.updated_at / 1000)
-        st.metric(
-            label="Last Update",
-            value=last_update.strftime("%H:%M:%S"),
-        )
+        st.metric("Last Update", last_update.strftime("%H:%M:%S"))
 
-    # Store historical data snapshot
-    fetcher.store_historical_snapshot(aggregates.total_dv01, aggregates.total_npv)
-
-    # Charts row
+    # ================================================================
+    # 4. LIVE DV01 SPARKLINE (streaming feel)
+    # ================================================================
     st.divider()
-    col1, col2 = st.columns(2)
+    st.subheader("Live DV01 Monitor")
+    hist_mini = fetcher.get_historical_dv01(
+        datetime.now() - timedelta(minutes=5), datetime.now()
+    )
+    if not hist_mini.empty and len(hist_mini) > 1:
+        mini_chart = AdvancedCharts.create_mini_live_chart(hist_mini)
+        st.plotly_chart(mini_chart, use_container_width=True, key="live_dv01")
+    else:
+        st.info("Building real-time history... (collecting data points)")
 
-    with col1:
-        st.subheader("Key Rate Duration Profile")
+    # ================================================================
+    # 5. PORTFOLIO BREAKDOWN (when viewing all)
+    # ================================================================
+    if selected_portfolio_id == "ALL" and not trades_df.empty and portfolios:
+        st.divider()
+        st.subheader("Portfolio Breakdown")
+        metric_col, _ = st.columns([1, 3])
+        with metric_col:
+            breakdown_metric = st.selectbox(
+                "View by",
+                options=["DV01", "NPV", "Notional", "Count"],
+                index=0,
+                key="breakdown_metric",
+            )
+        b1, b2 = st.columns(2)
+        with b1:
+            st.plotly_chart(
+                AdvancedCharts.create_portfolio_breakdown_chart(trades_df, metric=breakdown_metric),
+                use_container_width=True,
+            )
+        with b2:
+            st.plotly_chart(
+                AdvancedCharts.create_portfolio_pie_chart(trades_df, metric=breakdown_metric),
+                use_container_width=True,
+            )
 
-        krd_data = pd.DataFrame(
-            {
-                "Tenor": ["2Y", "5Y", "10Y", "30Y"],
-                "KRD": [
-                    aggregates.krd_2y,
-                    aggregates.krd_5y,
-                    aggregates.krd_10y,
-                    aggregates.krd_30y,
-                ],
-            }
-        )
+    # ================================================================
+    # 6. PORTFOLIO HOLDINGS TABLE (manager's primary view)
+    # ================================================================
+    st.divider()
+    st.subheader("Portfolio Holdings")
 
-        st.bar_chart(
-            krd_data.set_index("Tenor"),
+    if not filtered_trades_df.empty:
+        display_df = filtered_trades_df.copy()
+
+        # Issuer column from ISIN
+        if "ISIN" in display_df.columns:
+            display_df["Issuer"] = display_df["ISIN"].apply(
+                lambda x: extract_issuer_name(x) if x else "Unknown"
+            )
+        else:
+            display_df["Issuer"] = "Corporate Bond"
+
+        column_order = [
+            "Issuer", "Portfolio", "Type", "Currency", "Notional",
+            "Coupon", "NPV", "DV01", "KRD 2Y", "KRD 5Y", "KRD 10Y", "KRD 30Y",
+        ]
+        display_columns = [c for c in column_order if c in display_df.columns]
+        table_df = display_df[display_columns].copy()
+
+        # Format currency columns
+        for col in ["Notional", "NPV", "DV01", "KRD 2Y", "KRD 5Y", "KRD 10Y", "KRD 30Y"]:
+            if col in table_df.columns:
+                table_df[col] = table_df[col].apply(lambda x: f"${x:,.2f}")
+        if "Coupon" in table_df.columns:
+            table_df["Coupon"] = table_df["Coupon"].apply(
+                lambda x: f"{x * 100:.3f}%" if x > 0 else "-"
+            )
+
+        # Summary row above table
+        tc1, tc2, tc3, tc4 = st.columns(4)
+        with tc1:
+            st.metric("Positions", f"{len(table_df):,}")
+        with tc2:
+            tot_not = (
+                filtered_trades_df["Notional"].sum()
+                if "Notional" in filtered_trades_df.columns
+                else 0
+            )
+            st.metric("Total Notional", f"${tot_not / 1e9:.2f}B")
+        with tc3:
+            st.metric("Total NPV", format_currency(filt_npv))
+        with tc4:
+            st.metric("Total DV01", format_currency(filt_dv01))
+
+        st.dataframe(
+            table_df,
             use_container_width=True,
-            color="#4CAF50",
+            hide_index=True,
+            height=500,
         )
 
-    with col2:
-        st.subheader("Risk Distribution")
+        csv = table_df.to_csv(index=False)
+        col_dl, col_info = st.columns([1, 4])
+        with col_dl:
+            st.download_button(
+                label="Download CSV",
+                data=csv,
+                file_name=f"portfolio_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+            )
+        with col_info:
+            st.caption(
+                f"Showing {len(table_df):,} of {len(trades_df):,} instruments | "
+                f"Last updated: {datetime.now().strftime('%H:%M:%S')}"
+            )
+    else:
+        st.info("No positions in selected portfolio or all filtered out")
 
+    # ================================================================
+    # 7. RISK ANALYTICS & VISUALIZATIONS (after table)
+    # ================================================================
+    st.divider()
+    st.subheader("Risk Analytics")
+
+    # KRD profile + Risk Distribution
+    v1, v2 = st.columns(2)
+    with v1:
+        st.markdown("**Key Rate Duration Profile**")
+        krd_data = pd.DataFrame({
+            "Tenor": ["2Y", "5Y", "10Y", "30Y"],
+            "KRD": [aggregates.krd_2y, aggregates.krd_5y, aggregates.krd_10y, aggregates.krd_30y],
+        })
+        st.bar_chart(krd_data.set_index("Tenor"), use_container_width=True, color="#4CAF50")
+
+    with v2:
+        st.markdown("**Risk Distribution by Issuer**")
         if not filtered_trades_df.empty:
-            # DV01 distribution
-            dv01_by_trade = filtered_trades_df[["Instrument ID", "DV01"]].copy()
-            dv01_by_trade["DV01 Abs"] = dv01_by_trade["DV01"].abs()
-            dv01_by_trade = dv01_by_trade.sort_values("DV01 Abs", ascending=False)
-
+            dist_df = filtered_trades_df.copy()
+            if "ISIN" in dist_df.columns:
+                dist_df["Issuer"] = dist_df["ISIN"].apply(
+                    lambda x: extract_issuer_name(x) if x else "Unknown"
+                )
+            else:
+                dist_df["Issuer"] = dist_df["Instrument ID"]
+            dv01_by_issuer = dist_df[["Issuer", "DV01"]].copy()
+            dv01_by_issuer["DV01 Abs"] = dv01_by_issuer["DV01"].abs()
+            dv01_by_issuer = dv01_by_issuer.sort_values("DV01 Abs", ascending=False)
             st.bar_chart(
-                dv01_by_trade.set_index("Instrument ID")["DV01"],
+                dv01_by_issuer.set_index("Issuer")["DV01"],
                 use_container_width=True,
                 color="#2196F3",
             )
         else:
             st.info("No trade-level data available")
 
-    # Concentration Risk Analysis
+    # Concentration
     st.divider()
     st.subheader("Concentration Risk Analysis")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        concentration_chart = AdvancedCharts.create_concentration_chart(
-            filtered_trades_df, top_n=10
+    cr1, cr2 = st.columns(2)
+    with cr1:
+        st.plotly_chart(
+            AdvancedCharts.create_concentration_chart(filtered_trades_df, top_n=10),
+            use_container_width=True,
         )
-        st.plotly_chart(concentration_chart, use_container_width=True)
-
-    with col2:
-        concentration_pie = AdvancedCharts.create_concentration_pie(
-            filtered_trades_df, top_n=5
+    with cr2:
+        st.plotly_chart(
+            AdvancedCharts.create_concentration_pie(filtered_trades_df, top_n=5),
+            use_container_width=True,
         )
-        st.plotly_chart(concentration_pie, use_container_width=True)
 
-    # Risk Heatmap
+    # Heatmap
     st.divider()
     st.subheader("Risk Heatmap Analysis")
+    st.plotly_chart(
+        AdvancedCharts.create_krd_heatmap(filtered_trades_df), use_container_width=True
+    )
 
-    krd_heatmap = AdvancedCharts.create_krd_heatmap(filtered_trades_df)
-    st.plotly_chart(krd_heatmap, use_container_width=True)
-
-    # Historical Risk Analysis
+    # Historical
     st.divider()
     st.subheader("Historical Risk Analysis")
-
     historical_dv01 = fetcher.get_historical_dv01(start_date, end_date)
     historical_npv = fetcher.get_historical_npv(start_date, end_date)
-
     if not historical_dv01.empty:
-        col1, col2 = st.columns(2)
-
-        with col1:
-            dv01_chart = AdvancedCharts.create_historical_dv01_chart(historical_dv01)
-            st.plotly_chart(dv01_chart, use_container_width=True)
-
-        with col2:
-            dual_chart = AdvancedCharts.create_dual_axis_chart(historical_dv01, historical_npv)
-            st.plotly_chart(dual_chart, use_container_width=True)
+        h1, h2 = st.columns(2)
+        with h1:
+            st.plotly_chart(
+                AdvancedCharts.create_historical_dv01_chart(historical_dv01),
+                use_container_width=True,
+            )
+        with h2:
+            st.plotly_chart(
+                AdvancedCharts.create_dual_axis_chart(historical_dv01, historical_npv),
+                use_container_width=True,
+            )
     else:
         st.info(
             "No historical data available for selected date range. "
             "Historical data will accumulate as the dashboard runs."
         )
 
-    # Trade-level details
-    st.divider()
-    st.subheader("Trade-Level Risk Details")
-
-    if not filtered_trades_df.empty:
-        # Format numbers for display
-        display_df = filtered_trades_df.drop(columns=["Full ID"], errors="ignore").copy()
-        for col in ["NPV", "DV01", "KRD 2Y", "KRD 5Y", "KRD 10Y", "KRD 30Y"]:
-            if col in display_df.columns:
-                display_df[col] = display_df[col].apply(lambda x: f"${x:,.2f}")
-
-        st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True,
-        )
-    else:
-        st.info("No trade data available (or all filtered out)")
-
     # Footer
     st.divider()
     st.caption(
-        f"Risk Monitor Dashboard | "
+        f"Risk Monitor Dashboard v2 | "
         f"Refresh interval: {settings.refresh_interval}s | "
         f"Data source: Redis @ {settings.redis_host}:{settings.redis_port}"
     )
@@ -326,8 +454,6 @@ def render_dashboard():
 def main():
     """Main entry point."""
     render_dashboard()
-
-    # Auto-refresh
     time.sleep(settings.refresh_interval)
     st.rerun()
 
