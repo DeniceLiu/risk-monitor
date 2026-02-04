@@ -248,18 +248,39 @@ def render_dashboard():
         st.metric("Last Update", last_update.strftime("%H:%M:%S"))
 
     # ================================================================
-    # 4. LIVE DV01 SPARKLINE (streaming feel)
+    # 4. LIVE MONITORS — DV01 sparkline + Yield Curve
     # ================================================================
     st.divider()
-    st.subheader("Live DV01 Monitor")
-    hist_mini = fetcher.get_historical_dv01(
-        datetime.now() - timedelta(minutes=5), datetime.now()
-    )
-    if not hist_mini.empty and len(hist_mini) > 1:
-        mini_chart = AdvancedCharts.create_mini_live_chart(hist_mini)
-        st.plotly_chart(mini_chart, use_container_width=True, key="live_dv01")
-    else:
-        st.info("Building real-time history... (collecting data points)")
+    live_col1, live_col2 = st.columns(2)
+
+    with live_col1:
+        st.subheader("Live DV01 Monitor")
+        hist_mini = fetcher.get_historical_dv01(
+            datetime.now() - timedelta(minutes=5), datetime.now()
+        )
+        if not hist_mini.empty and len(hist_mini) > 1:
+            mini_chart = AdvancedCharts.create_mini_live_chart(hist_mini)
+            st.plotly_chart(mini_chart, use_container_width=True, key="live_dv01")
+        else:
+            st.info("Building real-time history...")
+
+    with live_col2:
+        st.subheader("Live Yield Curve")
+        yield_rates = fetcher.get_yield_curve_latest()
+        if yield_rates:
+            yc_chart = AdvancedCharts.create_yield_curve_chart(yield_rates)
+            st.plotly_chart(yc_chart, use_container_width=True, key="live_yc")
+        else:
+            st.info("Waiting for yield curve data...")
+
+    # Yield curve time series (rates over time)
+    yc_history = fetcher.get_yield_curve_history(minutes=30)
+    if not yc_history.empty and len(yc_history) > 1:
+        st.plotly_chart(
+            AdvancedCharts.create_yield_curve_timeseries(yc_history),
+            use_container_width=True,
+            key="yc_ts",
+        )
 
     # ================================================================
     # 5. PORTFOLIO BREAKDOWN (when viewing all)
@@ -293,8 +314,40 @@ def render_dashboard():
     st.divider()
     st.subheader("Portfolio Holdings")
 
-    if not filtered_trades_df.empty:
-        display_df = filtered_trades_df.copy()
+    # Inline portfolio selector for the table
+    hold_col1, hold_col2 = st.columns([1, 3])
+    with hold_col1:
+        table_portfolio_options = ["All Portfolios"]
+        table_portfolio_map = {"All Portfolios": "ALL"}
+        for p in portfolios:
+            label = f"{p.name} ({p.bond_count})"
+            table_portfolio_options.append(label)
+            table_portfolio_map[label] = p.id
+
+        # Sync default with sidebar selection
+        default_idx = 0
+        if selected_portfolio:
+            for i, opt in enumerate(table_portfolio_options):
+                if table_portfolio_map.get(opt) == selected_portfolio.id:
+                    default_idx = i
+                    break
+
+        table_portfolio_choice = st.selectbox(
+            "Select Portfolio",
+            options=table_portfolio_options,
+            index=default_idx,
+            key="holdings_portfolio",
+        )
+        table_pid = table_portfolio_map.get(table_portfolio_choice, "ALL")
+
+    # Apply holdings-level filter
+    if table_pid != "ALL" and not trades_df.empty:
+        holdings_df = trades_df[trades_df["Portfolio ID"] == table_pid].copy() if "Portfolio ID" in trades_df.columns else filtered_trades_df
+    else:
+        holdings_df = filtered_trades_df
+
+    if not holdings_df.empty:
+        display_df = holdings_df.copy()
 
         # Issuer column from ISIN
         if "ISIN" in display_df.columns:
@@ -320,21 +373,20 @@ def render_dashboard():
                 lambda x: f"{x * 100:.3f}%" if x > 0 else "-"
             )
 
-        # Summary row above table
+        # Summary row above table — computed from holdings_df (unformatted)
+        h_npv = holdings_df["NPV"].sum()
+        h_dv01 = holdings_df["DV01"].sum()
+        h_notional = holdings_df["Notional"].sum() if "Notional" in holdings_df.columns else 0
+
         tc1, tc2, tc3, tc4 = st.columns(4)
         with tc1:
             st.metric("Positions", f"{len(table_df):,}")
         with tc2:
-            tot_not = (
-                filtered_trades_df["Notional"].sum()
-                if "Notional" in filtered_trades_df.columns
-                else 0
-            )
-            st.metric("Total Notional", f"${tot_not / 1e9:.2f}B")
+            st.metric("Total Notional", f"${h_notional / 1e9:.2f}B")
         with tc3:
-            st.metric("Total NPV", format_currency(filt_npv))
+            st.metric("Total NPV", format_currency(h_npv))
         with tc4:
-            st.metric("Total DV01", format_currency(filt_dv01))
+            st.metric("Total DV01", format_currency(h_dv01))
 
         st.dataframe(
             table_df,

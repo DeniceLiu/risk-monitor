@@ -123,6 +123,31 @@ class RedisWriter:
         self.client.hset(key, mapping=data)
         logger.info(f"Portfolio aggregates updated: DV01={aggregates.get('total_dv01', 0):.2f}")
 
+    def write_yield_curve(self, rates: Dict[str, float], curve_timestamp: int) -> None:
+        """Write latest yield curve snapshot to Redis.
+
+        Args:
+            rates: Tenor -> rate mapping (e.g. {"2Y": 0.0420, ...})
+            curve_timestamp: Kafka message timestamp (ms)
+        """
+        data = {f"rate_{tenor.lower()}": str(rate) for tenor, rate in rates.items()}
+        data["timestamp"] = str(curve_timestamp)
+        data["updated_at"] = str(int(time.time() * 1000))
+
+        pipe = self.client.pipeline()
+        pipe.hset("yield_curve:latest", mapping=data)
+
+        # Store history as JSON in sorted set (score = timestamp)
+        curve_json = json.dumps({tenor: rate for tenor, rate in rates.items()})
+        pipe.zadd("yield_curve:history", {curve_json: curve_timestamp})
+
+        # Keep only last 1 hour of curve history
+        hour_ago = int(time.time() * 1000) - 3600_000
+        pipe.zremrangebyscore("yield_curve:history", "-inf", hour_ago)
+
+        pipe.execute()
+        logger.debug(f"Wrote yield curve at {curve_timestamp}")
+
     def close(self) -> None:
         """Close Redis connection."""
         self.client.close()

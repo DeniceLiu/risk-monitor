@@ -54,6 +54,9 @@ def process_market_update(
     curve_builder.update_rates(message["rates"], message["curve_date"])
 
     curve_timestamp = message["timestamp"]
+
+    # Persist current yield curve snapshot for dashboard
+    redis_writer.write_yield_curve(message["rates"], curve_timestamp)
     processed = 0
 
     # Calculate risk for each instrument

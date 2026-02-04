@@ -1,5 +1,6 @@
-"""Data fetching from Redis."""
+"""Data fetching from Redis and Security Master API."""
 
+import json
 import time
 from datetime import datetime
 from typing import Dict, List, Any, Optional
@@ -7,6 +8,8 @@ from dataclasses import dataclass
 
 import redis
 import pandas as pd
+import httpx
+import streamlit as st
 
 
 @dataclass
@@ -36,16 +39,155 @@ class PortfolioAggregates:
     updated_at: int
 
 
+@dataclass
+class Portfolio:
+    """Portfolio metadata from Security Master."""
+    id: str
+    name: str
+    description: str
+    strategy_type: str
+    bond_count: int = 0
+    total_notional: float = 0.0
+
+
+class PortfolioService:
+    """Fetches portfolio data from Security Master API."""
+
+    def __init__(self, api_url: str):
+        """Initialize with API URL."""
+        self.api_url = api_url.rstrip("/")
+        self._portfolios_cache: Optional[List[Portfolio]] = None
+        self._instruments_cache: Optional[Dict[int, Dict]] = None
+        self._cache_time: float = 0
+        self._cache_ttl: float = 30  # Cache for 30 seconds
+
+    def _is_cache_valid(self) -> bool:
+        """Check if cache is still valid."""
+        return time.time() - self._cache_time < self._cache_ttl
+
+    @st.cache_data(ttl=30)
+    def get_portfolios(_self) -> List[Portfolio]:
+        """Fetch all portfolios from Security Master."""
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                # Fetch portfolios
+                response = client.get(f"{_self.api_url}/api/v1/portfolios")
+                if response.status_code != 200:
+                    # Portfolios endpoint might not exist, get from instruments
+                    return _self._get_portfolios_from_instruments()
+
+                data = response.json()
+                portfolios = []
+                for p in data:
+                    portfolios.append(Portfolio(
+                        id=p["id"],
+                        name=p["name"],
+                        description=p.get("description", ""),
+                        strategy_type=p.get("strategy_type", ""),
+                        bond_count=p.get("bond_count", 0),
+                        total_notional=float(p.get("total_notional", 0)),
+                    ))
+                return portfolios
+        except Exception:
+            return _self._get_portfolios_from_instruments()
+
+    def _get_portfolios_from_instruments(self) -> List[Portfolio]:
+        """Extract unique portfolios from instruments."""
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                portfolio_stats: Dict[str, Dict] = {}
+                page = 1
+                page_size = 100  # API limit is 100
+
+                while True:
+                    response = client.get(
+                        f"{self.api_url}/api/v1/instruments",
+                        params={"page": page, "page_size": page_size}
+                    )
+                    if response.status_code != 200:
+                        break
+
+                    data = response.json()
+                    for item in data.get("items", []):
+                        pid = item.get("portfolio_id")
+                        if pid:
+                            if pid not in portfolio_stats:
+                                portfolio_stats[pid] = {
+                                    "count": 0,
+                                    "notional": 0.0
+                                }
+                            portfolio_stats[pid]["count"] += 1
+                            portfolio_stats[pid]["notional"] += float(item.get("notional", 0))
+
+                    if page >= data.get("pages", 1):
+                        break
+                    page += 1
+
+                # Create Portfolio objects
+                portfolios = []
+                for pid, stats in portfolio_stats.items():
+                    portfolios.append(Portfolio(
+                        id=pid,
+                        name=pid.replace("_", " ").title(),
+                        description="",
+                        strategy_type="",
+                        bond_count=stats["count"],
+                        total_notional=stats["notional"],
+                    ))
+
+                return sorted(portfolios, key=lambda p: p.bond_count, reverse=True)
+        except Exception:
+            return []
+
+    @st.cache_data(ttl=30)
+    def get_instruments_map(_self) -> Dict[str, Dict]:
+        """Get map of instrument_id -> instrument details including portfolio_id."""
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                instruments_map = {}
+                page = 1
+                page_size = 100  # API limit is 100
+
+                while True:
+                    response = client.get(
+                        f"{_self.api_url}/api/v1/instruments",
+                        params={"page": page, "page_size": page_size}
+                    )
+                    if response.status_code != 200:
+                        break
+
+                    data = response.json()
+                    for item in data.get("items", []):
+                        instruments_map[item["id"]] = {
+                            "portfolio_id": item.get("portfolio_id"),
+                            "isin": item.get("isin", ""),
+                            "instrument_type": item.get("instrument_type", "BOND"),
+                            "notional": float(item.get("notional", 0)),
+                            "currency": item.get("currency", "USD"),
+                            "coupon_rate": float(item.get("coupon_rate", 0)),
+                            "maturity_date": item.get("maturity_date"),
+                        }
+
+                    if page >= data.get("pages", 1):
+                        break
+                    page += 1
+
+                return instruments_map
+        except Exception:
+            return {}
+
+
 class RiskDataFetcher:
     """Fetches risk data from Redis."""
 
-    def __init__(self, host: str, port: int):
+    def __init__(self, host: str, port: int, portfolio_service: Optional[PortfolioService] = None):
         """Initialize Redis connection."""
         self.client = redis.Redis(
             host=host,
             port=port,
             decode_responses=True,
         )
+        self.portfolio_service = portfolio_service
 
     def get_portfolio_aggregates(self) -> Optional[PortfolioAggregates]:
         """Get portfolio-level aggregates."""
@@ -111,6 +253,11 @@ class RiskDataFetcher:
         if not trades:
             return pd.DataFrame()
 
+        # Get instrument metadata from Security Master if available
+        instruments_map = {}
+        if self.portfolio_service:
+            instruments_map = self.portfolio_service.get_instruments_map()
+
         data = []
         for t in trades:
             # Try to get additional metadata from Redis
@@ -120,11 +267,29 @@ class RiskDataFetcher:
             except redis.RedisError:
                 meta = {}
 
+            # Get instrument info from Security Master (using instrument ID as key)
+            inst_info = instruments_map.get(t.instrument_id, {})
+
+            # Use ISIN as display ID if available
+            isin = inst_info.get("isin", "")
+            display_id = isin[:12] if isin else t.instrument_id[:12]
+            if len(display_id) > 10:
+                display_id = display_id[:10] + ".."
+
+            # Get portfolio with fallback to default
+            portfolio_id = inst_info.get("portfolio_id", "") or "DEFAULT"
+            portfolio_name = portfolio_id.replace("_", " ").title() if portfolio_id != "DEFAULT" else "Main Portfolio"
+            
             data.append({
-                "Instrument ID": t.instrument_id[:8] + "...",
+                "Instrument ID": display_id,
                 "Full ID": t.instrument_id,
-                "Type": meta.get("type", "BOND"),  # Default to BOND
-                "Currency": meta.get("currency", "USD"),  # Default to USD
+                "ISIN": isin,
+                "Type": inst_info.get("instrument_type", meta.get("type", "BOND")),
+                "Currency": inst_info.get("currency", meta.get("currency", "USD")),
+                "Portfolio": portfolio_name,
+                "Portfolio ID": portfolio_id,
+                "Notional": inst_info.get("notional", 0),
+                "Coupon": inst_info.get("coupon_rate", 0),
                 "NPV": t.npv,
                 "DV01": t.dv01,
                 "KRD 2Y": t.krd_2y,
@@ -212,6 +377,57 @@ class RiskDataFetcher:
             )
 
         return pd.DataFrame(data)
+
+    def get_yield_curve_latest(self) -> Optional[Dict[str, float]]:
+        """Get the latest yield curve rates from Redis.
+
+        Returns:
+            Dict of tenor -> rate, or None if unavailable
+        """
+        try:
+            data = self.client.hgetall("yield_curve:latest")
+            if not data:
+                return None
+            rates = {}
+            for key, val in data.items():
+                if key.startswith("rate_"):
+                    tenor = key[5:].upper()
+                    rates[tenor] = float(val)
+            return rates if rates else None
+        except redis.RedisError:
+            return None
+
+    def get_yield_curve_history(self, minutes: int = 30) -> pd.DataFrame:
+        """Get yield curve history for time-series display.
+
+        Args:
+            minutes: How many minutes of history to fetch
+
+        Returns:
+            DataFrame with columns: timestamp, and one column per tenor
+        """
+        now_ms = int(time.time() * 1000)
+        start_ms = now_ms - minutes * 60 * 1000
+
+        try:
+            results = self.client.zrangebyscore(
+                "yield_curve:history", start_ms, now_ms, withscores=True
+            )
+        except redis.RedisError:
+            return pd.DataFrame()
+
+        if not results:
+            return pd.DataFrame()
+
+        rows = []
+        for value, score in results:
+            rates = json.loads(value)
+            row = {"timestamp": datetime.fromtimestamp(score / 1000)}
+            for tenor, rate in rates.items():
+                row[tenor] = float(rate)
+            rows.append(row)
+
+        return pd.DataFrame(rows)
 
     def store_historical_snapshot(self, dv01: float, npv: float) -> None:
         """

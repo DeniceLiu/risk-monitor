@@ -40,8 +40,6 @@ class AdvancedCharts:
                 y=historical_df["dv01"],
                 mode="lines",
                 line=dict(color="#00c853", width=2),
-                fill="tozeroy",
-                fillcolor="rgba(0,200,83,0.10)",
                 hovertemplate="DV01: $%{y:,.0f}<br>%{x|%H:%M:%S}<extra></extra>",
             )
         )
@@ -49,11 +47,17 @@ class AdvancedCharts:
         bg = "rgba(0,0,0,0)"
         grid_color = "rgba(255,255,255,0.08)" if is_dark else "rgba(0,0,0,0.06)"
 
+        # Auto-fit y-axis around actual data
+        dv01_min = historical_df["dv01"].min()
+        dv01_max = historical_df["dv01"].max()
+        margin = (dv01_max - dv01_min) * 0.1 if dv01_max != dv01_min else abs(dv01_max) * 0.05
+        y_range = [dv01_min - margin, dv01_max + margin]
+
         fig.update_layout(
             height=130,
             margin=dict(l=0, r=0, t=0, b=0),
             xaxis=dict(showgrid=False, showticklabels=True, tickformat="%H:%M:%S"),
-            yaxis=dict(showgrid=True, gridcolor=grid_color, tickformat="$,.0f"),
+            yaxis=dict(showgrid=True, gridcolor=grid_color, tickformat="$,.0f", range=y_range),
             plot_bgcolor=bg,
             paper_bgcolor=bg,
             hovermode="x unified",
@@ -63,11 +67,89 @@ class AdvancedCharts:
         return fig
 
     # ------------------------------------------------------------------
-    # Historical DV01
+    # Yield Curve snapshot + time series (NEW)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def create_yield_curve_chart(rates: dict) -> go.Figure:
+        """Create a yield curve chart from current rates snapshot."""
+        template = AdvancedCharts.get_template()
+        # Order tenors by maturity
+        tenor_order = ["1M", "3M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "20Y", "30Y"]
+        tenors = [t for t in tenor_order if t in rates]
+        values = [rates[t] * 100 for t in tenors]  # convert to percent
+
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=tenors,
+                y=values,
+                mode="lines+markers",
+                line=dict(color="#2196F3", width=3),
+                marker=dict(size=8),
+                hovertemplate="<b>%{x}</b><br>Rate: %{y:.3f}%<extra></extra>",
+            )
+        )
+        fig.update_layout(
+            title="USD Yield Curve (Current)",
+            xaxis_title="Tenor",
+            yaxis_title="Rate (%)",
+            template=template,
+            height=320,
+            margin=dict(l=60, r=20, t=50, b=40),
+            yaxis=dict(tickformat=".2f", automargin=True),
+        )
+        return fig
+
+    @staticmethod
+    def create_yield_curve_timeseries(history_df: pd.DataFrame) -> go.Figure:
+        """Create time series of key yield curve tenors."""
+        template = AdvancedCharts.get_template()
+
+        if history_df.empty:
+            fig = go.Figure()
+            fig.add_annotation(
+                text="Collecting yield curve history...",
+                xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False,
+            )
+            fig.update_layout(template=template, height=320)
+            return fig
+
+        key_tenors = ["2Y", "5Y", "10Y", "30Y"]
+        colors = {"2Y": "#26A69A", "5Y": "#42A5F5", "10Y": "#FFA726", "30Y": "#EF5350"}
+
+        fig = go.Figure()
+        for tenor in key_tenors:
+            if tenor in history_df.columns:
+                fig.add_trace(
+                    go.Scatter(
+                        x=history_df["timestamp"],
+                        y=history_df[tenor] * 100,
+                        mode="lines",
+                        name=tenor,
+                        line=dict(color=colors.get(tenor, "#999"), width=2),
+                        hovertemplate=f"{tenor}: %{{y:.3f}}%<br>%{{x|%H:%M:%S}}<extra></extra>",
+                    )
+                )
+
+        fig.update_layout(
+            title="Yield Curve Rates Over Time",
+            xaxis_title="Time",
+            yaxis_title="Rate (%)",
+            template=template,
+            height=320,
+            margin=dict(l=60, r=20, t=50, b=40),
+            hovermode="x unified",
+            yaxis=dict(tickformat=".3f", automargin=True),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        return fig
+
+    # ------------------------------------------------------------------
+    # Historical DV01 — fixed scaling (no fill-to-zero, auto-fit y-axis)
     # ------------------------------------------------------------------
     @staticmethod
     def create_historical_dv01_chart(historical_df: pd.DataFrame) -> go.Figure:
-        """Create line chart showing DV01 over time."""
+        """Create line chart showing DV01 over time with auto-fit scaling."""
         template = AdvancedCharts.get_template()
 
         if historical_df.empty:
@@ -87,8 +169,6 @@ class AdvancedCharts:
                 mode="lines",
                 name="DV01",
                 line=dict(color="#4CAF50", width=2),
-                fill="tozeroy",
-                fillcolor="rgba(76, 175, 80, 0.1)",
             )
         )
 
@@ -105,6 +185,12 @@ class AdvancedCharts:
                 )
             )
 
+        # Auto-fit y-axis around actual data range with 5% padding
+        dv01_min = historical_df["dv01"].min()
+        dv01_max = historical_df["dv01"].max()
+        margin = (dv01_max - dv01_min) * 0.05 if dv01_max != dv01_min else abs(dv01_max) * 0.05
+        y_range = [dv01_min - margin, dv01_max + margin]
+
         fig.update_layout(
             title="Portfolio DV01 Over Time",
             xaxis_title="Time",
@@ -114,6 +200,7 @@ class AdvancedCharts:
             height=400,
             showlegend=True,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            yaxis=dict(range=y_range, tickformat="$,.0f", automargin=True),
         )
         return fig
 
