@@ -26,17 +26,48 @@ st.set_page_config(
 )
 
 
-# Prevent white flash on auto-refresh by keeping background stable
+# Aggressive anti-flash CSS — injected before any content renders.
+# The .streamlit/config.toml sets server-level theme so the background
+# is never white-by-default.  This CSS hides the "Running…" spinner and
+# prevents Streamlit's rerun from visually clearing content.
 st.markdown(
     """
     <style>
-    /* Eliminate flash between refreshes */
-    [data-testid="stAppViewContainer"], [data-testid="stApp"] {
-        transition: none !important;
+    /* 1. Lock background on every layer so nothing can flash white */
+    html, body, #root,
+    [data-testid="stApp"],
+    [data-testid="stAppViewContainer"],
+    .main {
+        background-color: #ffffff !important;
     }
-    /* Keep iframe/chart containers stable during rerun */
-    iframe { transition: none !important; }
-    .stPlotlyChart { min-height: 280px; }
+
+    /* 2. Hide the "Running…" status widget in the top-right corner */
+    [data-testid="stStatusWidget"] {
+        display: none !important;
+    }
+
+    /* 3. Kill ALL transitions & animations site-wide (prevents fade flicker) */
+    *, *::before, *::after {
+        transition: none !important;
+        animation-duration: 0.001s !important;   /* keep @keyframes functional */
+    }
+    /* … except the live-dot pulse which we want */
+    .live-dot {
+        animation-duration: 2s !important;
+    }
+
+    /* 4. Stabilise layout so content doesn't jump during rerun */
+    .main .block-container {
+        min-height: 100vh;
+    }
+    .stPlotlyChart {
+        min-height: 280px;
+    }
+
+    /* 5. Hide the brief "Please wait…" skeleton screens */
+    [data-testid="stSkeleton"] {
+        display: none !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
