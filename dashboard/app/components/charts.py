@@ -54,8 +54,8 @@ class AdvancedCharts:
         y_range = [dv01_min - margin, dv01_max + margin]
 
         fig.update_layout(
-            height=130,
-            margin=dict(l=0, r=0, t=0, b=0),
+            height=280,
+            margin=dict(l=50, r=20, t=10, b=40),
             xaxis=dict(showgrid=False, showticklabels=True, tickformat="%H:%M:%S"),
             yaxis=dict(showgrid=True, gridcolor=grid_color, tickformat="$,.0f", range=y_range),
             plot_bgcolor=bg,
@@ -94,7 +94,7 @@ class AdvancedCharts:
             xaxis_title="Tenor",
             yaxis_title="Rate (%)",
             template=template,
-            height=320,
+            height=280,
             margin=dict(l=60, r=20, t=50, b=40),
             yaxis=dict(tickformat=".2f", automargin=True),
         )
@@ -209,7 +209,7 @@ class AdvancedCharts:
     # ------------------------------------------------------------------
     @staticmethod
     def create_concentration_chart(trades_df: pd.DataFrame, top_n: int = 10) -> go.Figure:
-        """Create bar chart showing top N risk contributors (by issuer name)."""
+        """Create bar chart showing top N risk contributors aggregated by issuer."""
         template = AdvancedCharts.get_template()
 
         if trades_df.empty:
@@ -222,26 +222,27 @@ class AdvancedCharts:
             return fig
 
         df = trades_df.copy()
-        df["DV01_Abs"] = df["DV01"].abs()
-        top_trades = df.nlargest(top_n, "DV01_Abs").copy()
+        df["Issuer"] = df.apply(_issuer_label, axis=1)
 
-        total_dv01 = df["DV01_Abs"].sum()
-        top_trades["Percentage"] = (
-            top_trades["DV01_Abs"] / total_dv01 * 100 if total_dv01 > 0 else 0
+        # Aggregate by issuer
+        issuer_dv01 = df.groupby("Issuer")["DV01"].sum().reset_index()
+        issuer_dv01["DV01_Abs"] = issuer_dv01["DV01"].abs()
+        top_issuers = issuer_dv01.nlargest(top_n, "DV01_Abs").copy()
+
+        total_dv01 = issuer_dv01["DV01_Abs"].sum()
+        top_issuers["Percentage"] = (
+            top_issuers["DV01_Abs"] / total_dv01 * 100 if total_dv01 > 0 else 0
         )
-
-        # V2: readable issuer labels
-        top_trades["Issuer"] = top_trades.apply(_issuer_label, axis=1)
 
         fig = go.Figure()
         fig.add_trace(
             go.Bar(
-                x=top_trades["Issuer"],
-                y=top_trades["DV01"],
-                text=top_trades["Percentage"].apply(lambda x: f"{x:.1f}%"),
+                x=top_issuers["Issuer"],
+                y=top_issuers["DV01"],
+                text=top_issuers["Percentage"].apply(lambda x: f"{x:.1f}%"),
                 textposition="outside",
                 marker=dict(
-                    color=top_trades["DV01"],
+                    color=top_issuers["DV01"],
                     colorscale="RdYlGn",
                     showscale=True,
                     colorbar=dict(title="DV01 ($)"),
@@ -251,7 +252,7 @@ class AdvancedCharts:
         )
 
         fig.update_layout(
-            title=f"Top {top_n} Risk Contributors",
+            title=f"Top {top_n} Risk Contributors (by Issuer)",
             xaxis_title="Issuer",
             yaxis_title="DV01 ($)",
             template=template,
@@ -268,7 +269,7 @@ class AdvancedCharts:
     # ------------------------------------------------------------------
     @staticmethod
     def create_concentration_pie(trades_df: pd.DataFrame, top_n: int = 5) -> go.Figure:
-        """Create pie chart showing concentration risk (by issuer name)."""
+        """Create pie chart showing concentration risk aggregated by issuer."""
         template = AdvancedCharts.get_template()
 
         if trades_df.empty:
@@ -277,17 +278,17 @@ class AdvancedCharts:
             return fig
 
         df = trades_df.copy()
-        df["DV01_Abs"] = df["DV01"].abs()
-        top_trades = df.nlargest(top_n, "DV01_Abs").copy()
+        df["Issuer"] = df.apply(_issuer_label, axis=1)
 
-        top_sum = top_trades["DV01_Abs"].sum()
-        others_sum = df["DV01_Abs"].sum() - top_sum
+        # Aggregate by issuer
+        issuer_dv01 = df.groupby("Issuer")["DV01"].sum().abs().reset_index(name="DV01_Abs")
+        top_issuers = issuer_dv01.nlargest(top_n, "DV01_Abs")
 
-        # V2: issuer labels
-        top_trades["Issuer"] = top_trades.apply(_issuer_label, axis=1)
+        top_sum = top_issuers["DV01_Abs"].sum()
+        others_sum = issuer_dv01["DV01_Abs"].sum() - top_sum
 
-        labels = list(top_trades["Issuer"]) + (["Others"] if others_sum > 0 else [])
-        values = list(top_trades["DV01_Abs"]) + ([others_sum] if others_sum > 0 else [])
+        labels = list(top_issuers["Issuer"]) + (["Others"] if others_sum > 0 else [])
+        values = list(top_issuers["DV01_Abs"]) + ([others_sum] if others_sum > 0 else [])
 
         fig = go.Figure(
             data=[
@@ -299,7 +300,7 @@ class AdvancedCharts:
                 )
             ]
         )
-        fig.update_layout(title="Risk Concentration Distribution", template=template, height=400)
+        fig.update_layout(title="Risk Concentration by Issuer", template=template, height=400)
         return fig
 
     # ------------------------------------------------------------------

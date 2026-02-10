@@ -26,6 +26,23 @@ st.set_page_config(
 )
 
 
+# Prevent white flash on auto-refresh by keeping background stable
+st.markdown(
+    """
+    <style>
+    /* Eliminate flash between refreshes */
+    [data-testid="stAppViewContainer"], [data-testid="stApp"] {
+        transition: none !important;
+    }
+    /* Keep iframe/chart containers stable during rerun */
+    iframe { transition: none !important; }
+    .stPlotlyChart { min-height: 280px; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
 def format_currency(value: float, decimals: int = 0) -> str:
     """Format a number as currency."""
     if abs(value) >= 1_000_000:
@@ -249,7 +266,33 @@ def render_dashboard():
         st.metric("Last Update", last_update.strftime("%H:%M:%S"))
 
     # ================================================================
-    # 4. LIVE MONITORS — DV01 sparkline + Yield Curve
+    # 4. PORTFOLIO BREAKDOWN (when viewing all) — shown first
+    # ================================================================
+    if selected_portfolio_id == "ALL" and not trades_df.empty and portfolios:
+        st.divider()
+        st.subheader("Portfolio Breakdown")
+        metric_col, _ = st.columns([1, 3])
+        with metric_col:
+            breakdown_metric = st.selectbox(
+                "View by",
+                options=["DV01", "NPV", "Notional", "Count"],
+                index=0,
+                key="breakdown_metric",
+            )
+        b1, b2 = st.columns(2)
+        with b1:
+            st.plotly_chart(
+                AdvancedCharts.create_portfolio_breakdown_chart(trades_df, metric=breakdown_metric),
+                use_container_width=True,
+            )
+        with b2:
+            st.plotly_chart(
+                AdvancedCharts.create_portfolio_pie_chart(trades_df, metric=breakdown_metric),
+                use_container_width=True,
+            )
+
+    # ================================================================
+    # 5. LIVE MONITORS — DV01 sparkline + Yield Curve
     # ================================================================
     st.divider()
     live_col1, live_col2 = st.columns(2)
@@ -282,32 +325,6 @@ def render_dashboard():
             use_container_width=True,
             key="yc_ts",
         )
-
-    # ================================================================
-    # 5. PORTFOLIO BREAKDOWN (when viewing all)
-    # ================================================================
-    if selected_portfolio_id == "ALL" and not trades_df.empty and portfolios:
-        st.divider()
-        st.subheader("Portfolio Breakdown")
-        metric_col, _ = st.columns([1, 3])
-        with metric_col:
-            breakdown_metric = st.selectbox(
-                "View by",
-                options=["DV01", "NPV", "Notional", "Count"],
-                index=0,
-                key="breakdown_metric",
-            )
-        b1, b2 = st.columns(2)
-        with b1:
-            st.plotly_chart(
-                AdvancedCharts.create_portfolio_breakdown_chart(trades_df, metric=breakdown_metric),
-                use_container_width=True,
-            )
-        with b2:
-            st.plotly_chart(
-                AdvancedCharts.create_portfolio_pie_chart(trades_df, metric=breakdown_metric),
-                use_container_width=True,
-            )
 
     # ================================================================
     # 6. PORTFOLIO HOLDINGS TABLE (manager's primary view)
@@ -506,7 +523,6 @@ def render_dashboard():
 
 def main():
     """Main entry point."""
-    # Auto-refresh using streamlit-autorefresh (avoids recursion issues)
     st_autorefresh(interval=settings.refresh_interval * 1000, key="data_refresh")
     render_dashboard()
 
