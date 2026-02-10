@@ -169,6 +169,8 @@ class AdvancedCharts:
                 mode="lines",
                 name="DV01",
                 line=dict(color="#4CAF50", width=2),
+                fill="tozeroy",
+                fillcolor="rgba(76,175,80,0.10)",
             )
         )
 
@@ -185,10 +187,11 @@ class AdvancedCharts:
                 )
             )
 
-        # Auto-fit y-axis around actual data range with 5% padding
+        # Auto-fit y-axis around actual data range with 10% padding
         dv01_min = historical_df["dv01"].min()
         dv01_max = historical_df["dv01"].max()
-        margin = (dv01_max - dv01_min) * 0.05 if dv01_max != dv01_min else abs(dv01_max) * 0.05
+        spread = dv01_max - dv01_min
+        margin = spread * 0.10 if spread > 0 else abs(dv01_max) * 0.10
         y_range = [dv01_min - margin, dv01_max + margin]
 
         fig.update_layout(
@@ -608,6 +611,8 @@ class AdvancedCharts:
                     name="DV01",
                     yaxis="y",
                     line=dict(color="#4CAF50", width=2),
+                    fill="tozeroy",
+                    fillcolor="rgba(76,175,80,0.08)",
                 )
             )
 
@@ -623,20 +628,27 @@ class AdvancedCharts:
             )
 
         fig.update_layout(
-            title="Portfolio Metrics Over Time",
+            title="DV01 & NPV Over Time",
             xaxis=dict(title="Time"),
             yaxis=dict(
-                title="DV01 ($)", titlefont=dict(color="#4CAF50"), tickfont=dict(color="#4CAF50")
+                title="DV01 ($)",
+                titlefont=dict(color="#4CAF50"),
+                tickfont=dict(color="#4CAF50"),
+                tickformat="$,.0f",
+                automargin=True,
             ),
             yaxis2=dict(
                 title="NPV ($)",
                 titlefont=dict(color="#2196F3"),
                 tickfont=dict(color="#2196F3"),
+                tickformat="$,.0f",
                 overlaying="y",
                 side="right",
+                automargin=True,
             ),
             hovermode="x unified",
             template=template,
             height=400,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         )
         return fig
