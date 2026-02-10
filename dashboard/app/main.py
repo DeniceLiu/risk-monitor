@@ -25,45 +25,32 @@ st.set_page_config(
 )
 
 
-# Aggressive anti-flash CSS — injected before any content renders.
-# The .streamlit/config.toml sets server-level theme so the background
-# is never white-by-default.  This CSS hides the "Running…" spinner and
-# prevents Streamlit's rerun from visually clearing content.
+# Anti-flash CSS — keeps background stable during fragment reruns.
 st.markdown(
     """
     <style>
-    /* 1. Lock background on every layer so nothing can flash white */
     html, body, #root,
     [data-testid="stApp"],
     [data-testid="stAppViewContainer"],
     .main {
         background-color: #ffffff !important;
     }
-
-    /* 2. Hide the "Running…" status widget in the top-right corner */
     [data-testid="stStatusWidget"] {
         display: none !important;
     }
-
-    /* 3. Kill ALL transitions & animations site-wide (prevents fade flicker) */
     *, *::before, *::after {
         transition: none !important;
-        animation-duration: 0.001s !important;   /* keep @keyframes functional */
+        animation-duration: 0.001s !important;
     }
-    /* … except the live-dot pulse which we want */
     .live-dot {
         animation-duration: 2s !important;
     }
-
-    /* 4. Stabilise layout so content doesn't jump during rerun */
     .main .block-container {
         min-height: 100vh;
     }
     .stPlotlyChart {
         min-height: 280px;
     }
-
-    /* 5. Hide the brief "Please wait…" skeleton screens */
     [data-testid="stSkeleton"] {
         display: none !important;
     }
@@ -116,8 +103,8 @@ def render_live_badge(label: str, is_live: bool):
     st.markdown(html, unsafe_allow_html=True)
 
 
-def render_sidebar(fetcher, aggregates, trades_df, portfolios):
-    """Render sidebar with all controls."""
+def render_sidebar(portfolios):
+    """Render sidebar controls. Runs in main scope (outside fragment)."""
     theme_manager = ThemeManager()
     theme_manager.render_toggle()
     theme_manager.apply_theme()
@@ -135,47 +122,21 @@ def render_sidebar(fetcher, aggregates, trades_df, portfolios):
     alert_manager.configure_limits()
     filters_manager.render_apply_buttons()
 
-    st.sidebar.divider()
-    st.sidebar.subheader("Export Data")
-    if aggregates and not trades_df.empty:
-        excel_file = ExcelExporter.create_portfolio_export(
-            trades_df,
-            {
-                "instrument_count": aggregates.instrument_count,
-                "total_npv": aggregates.total_npv,
-                "total_dv01": aggregates.total_dv01,
-                "krd_2y": aggregates.krd_2y,
-                "krd_5y": aggregates.krd_5y,
-                "krd_10y": aggregates.krd_10y,
-                "krd_30y": aggregates.krd_30y,
-            },
-        )
-        st.sidebar.download_button(
-            label="Download Excel Report",
-            data=excel_file,
-            file_name=f"portfolio_risk_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-
     return active_filters, start_date, end_date, alert_manager, filters_manager
 
 
-def render_dashboard():
-    """Main dashboard renderer — V2 layout."""
+def render_content(
+    active_filters, start_date, end_date, alert_manager, filters_manager,
+    portfolios, portfolio_service,
+):
+    """Main content area renderer — called from fragment every 2s."""
     # ── data layer ──────────────────────────────────────────────────
-    portfolio_service = PortfolioService(settings.security_master_url)
     fetcher = RiskDataFetcher(
         settings.redis_host, settings.redis_port, portfolio_service=portfolio_service
     )
     connected = fetcher.is_connected()
     aggregates = fetcher.get_portfolio_aggregates() if connected else None
-    portfolios = portfolio_service.get_portfolios()
     trades_df = fetcher.get_trades_dataframe() if connected else pd.DataFrame()
-
-    # ── sidebar ─────────────────────────────────────────────────────
-    active_filters, start_date, end_date, alert_manager, filters_manager = render_sidebar(
-        fetcher, aggregates, trades_df, portfolios
-    )
 
     filtered_trades_df = (
         filters_manager.apply_filters(trades_df, active_filters)
@@ -444,13 +405,32 @@ def render_dashboard():
         )
 
         csv = table_df.to_csv(index=False)
-        col_dl, col_info = st.columns([1, 4])
+        col_dl, col_xl, col_info = st.columns([1, 1, 3])
         with col_dl:
             st.download_button(
                 label="Download CSV",
                 data=csv,
                 file_name=f"portfolio_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
+            )
+        with col_xl:
+            excel_file = ExcelExporter.create_portfolio_export(
+                trades_df,
+                {
+                    "instrument_count": aggregates.instrument_count,
+                    "total_npv": aggregates.total_npv,
+                    "total_dv01": aggregates.total_dv01,
+                    "krd_2y": aggregates.krd_2y,
+                    "krd_5y": aggregates.krd_5y,
+                    "krd_10y": aggregates.krd_10y,
+                    "krd_30y": aggregates.krd_30y,
+                },
+            )
+            st.download_button(
+                label="Download Excel",
+                data=excel_file,
+                file_name=f"portfolio_risk_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
         with col_info:
             st.caption(
@@ -553,12 +533,24 @@ def render_dashboard():
 
 def main():
     """Main entry point."""
+    # ── Services ──
+    portfolio_service = PortfolioService(settings.security_master_url)
+    portfolios = portfolio_service.get_portfolios()
 
+    # ── Sidebar (stable — only reruns on user widget interaction) ──
+    active_filters, start_date, end_date, alert_manager, filters_manager = (
+        render_sidebar(portfolios)
+    )
+
+    # ── Main content (fragment reruns every 2s without touching sidebar) ──
     @st.fragment(run_every=timedelta(seconds=settings.refresh_interval))
-    def auto_refresh():
-        render_dashboard()
+    def live_content():
+        render_content(
+            active_filters, start_date, end_date, alert_manager,
+            filters_manager, portfolios, portfolio_service,
+        )
 
-    auto_refresh()
+    live_content()
 
 
 if __name__ == "__main__":
