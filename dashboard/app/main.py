@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 import streamlit as st
 import pandas as pd
+from streamlit_autorefresh import st_autorefresh
 
 from config import settings
 from data import RiskDataFetcher, PortfolioService
@@ -22,41 +23,6 @@ st.set_page_config(
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
-)
-
-
-# Anti-flash CSS — keeps background stable during fragment reruns.
-st.markdown(
-    """
-    <style>
-    html, body, #root,
-    [data-testid="stApp"],
-    [data-testid="stAppViewContainer"],
-    .main {
-        background-color: #ffffff !important;
-    }
-    [data-testid="stStatusWidget"] {
-        display: none !important;
-    }
-    *, *::before, *::after {
-        transition: none !important;
-        animation-duration: 0.001s !important;
-    }
-    .live-dot {
-        animation-duration: 2s !important;
-    }
-    .main .block-container {
-        min-height: 100vh;
-    }
-    .stPlotlyChart {
-        min-height: 280px;
-    }
-    [data-testid="stSkeleton"] {
-        display: none !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
 )
 
 
@@ -103,8 +69,8 @@ def render_live_badge(label: str, is_live: bool):
     st.markdown(html, unsafe_allow_html=True)
 
 
-def render_sidebar(portfolios):
-    """Render sidebar controls. Runs in main scope (outside fragment)."""
+def render_sidebar(fetcher, aggregates, trades_df, portfolios):
+    """Render sidebar with all controls."""
     theme_manager = ThemeManager()
     theme_manager.render_toggle()
     theme_manager.apply_theme()
@@ -122,21 +88,47 @@ def render_sidebar(portfolios):
     alert_manager.configure_limits()
     filters_manager.render_apply_buttons()
 
+    st.sidebar.divider()
+    st.sidebar.subheader("Export Data")
+    if aggregates and not trades_df.empty:
+        excel_file = ExcelExporter.create_portfolio_export(
+            trades_df,
+            {
+                "instrument_count": aggregates.instrument_count,
+                "total_npv": aggregates.total_npv,
+                "total_dv01": aggregates.total_dv01,
+                "krd_2y": aggregates.krd_2y,
+                "krd_5y": aggregates.krd_5y,
+                "krd_10y": aggregates.krd_10y,
+                "krd_30y": aggregates.krd_30y,
+            },
+        )
+        st.sidebar.download_button(
+            label="Download Excel Report",
+            data=excel_file,
+            file_name=f"portfolio_risk_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
     return active_filters, start_date, end_date, alert_manager, filters_manager
 
 
-def render_content(
-    active_filters, start_date, end_date, alert_manager, filters_manager,
-    portfolios, portfolio_service,
-):
-    """Main content area renderer — called from fragment every 2s."""
+def render_dashboard():
+    """Main dashboard renderer — V2 layout."""
     # ── data layer ──────────────────────────────────────────────────
+    portfolio_service = PortfolioService(settings.security_master_url)
     fetcher = RiskDataFetcher(
         settings.redis_host, settings.redis_port, portfolio_service=portfolio_service
     )
     connected = fetcher.is_connected()
     aggregates = fetcher.get_portfolio_aggregates() if connected else None
+    portfolios = portfolio_service.get_portfolios()
     trades_df = fetcher.get_trades_dataframe() if connected else pd.DataFrame()
+
+    # ── sidebar ─────────────────────────────────────────────────────
+    active_filters, start_date, end_date, alert_manager, filters_manager = render_sidebar(
+        fetcher, aggregates, trades_df, portfolios
+    )
 
     filtered_trades_df = (
         filters_manager.apply_filters(trades_df, active_filters)
@@ -257,33 +249,7 @@ def render_content(
         st.metric("Last Update", last_update.strftime("%H:%M:%S"))
 
     # ================================================================
-    # 4. PORTFOLIO BREAKDOWN (when viewing all) — shown first
-    # ================================================================
-    if selected_portfolio_id == "ALL" and not trades_df.empty and portfolios:
-        st.divider()
-        st.subheader("Portfolio Breakdown")
-        metric_col, _ = st.columns([1, 3])
-        with metric_col:
-            breakdown_metric = st.selectbox(
-                "View by",
-                options=["DV01", "NPV", "Notional", "Count"],
-                index=0,
-                key="breakdown_metric",
-            )
-        b1, b2 = st.columns(2)
-        with b1:
-            st.plotly_chart(
-                AdvancedCharts.create_portfolio_breakdown_chart(trades_df, metric=breakdown_metric),
-                use_container_width=True,
-            )
-        with b2:
-            st.plotly_chart(
-                AdvancedCharts.create_portfolio_pie_chart(trades_df, metric=breakdown_metric),
-                use_container_width=True,
-            )
-
-    # ================================================================
-    # 5. LIVE MONITORS — DV01 sparkline + Yield Curve
+    # 4. LIVE MONITORS — DV01 sparkline + Yield Curve
     # ================================================================
     st.divider()
     live_col1, live_col2 = st.columns(2)
@@ -316,6 +282,32 @@ def render_content(
             use_container_width=True,
             key="yc_ts",
         )
+
+    # ================================================================
+    # 5. PORTFOLIO BREAKDOWN (when viewing all)
+    # ================================================================
+    if selected_portfolio_id == "ALL" and not trades_df.empty and portfolios:
+        st.divider()
+        st.subheader("Portfolio Breakdown")
+        metric_col, _ = st.columns([1, 3])
+        with metric_col:
+            breakdown_metric = st.selectbox(
+                "View by",
+                options=["DV01", "NPV", "Notional", "Count"],
+                index=0,
+                key="breakdown_metric",
+            )
+        b1, b2 = st.columns(2)
+        with b1:
+            st.plotly_chart(
+                AdvancedCharts.create_portfolio_breakdown_chart(trades_df, metric=breakdown_metric),
+                use_container_width=True,
+            )
+        with b2:
+            st.plotly_chart(
+                AdvancedCharts.create_portfolio_pie_chart(trades_df, metric=breakdown_metric),
+                use_container_width=True,
+            )
 
     # ================================================================
     # 6. PORTFOLIO HOLDINGS TABLE (manager's primary view)
@@ -405,32 +397,13 @@ def render_content(
         )
 
         csv = table_df.to_csv(index=False)
-        col_dl, col_xl, col_info = st.columns([1, 1, 3])
+        col_dl, col_info = st.columns([1, 4])
         with col_dl:
             st.download_button(
                 label="Download CSV",
                 data=csv,
                 file_name=f"portfolio_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
-            )
-        with col_xl:
-            excel_file = ExcelExporter.create_portfolio_export(
-                trades_df,
-                {
-                    "instrument_count": aggregates.instrument_count,
-                    "total_npv": aggregates.total_npv,
-                    "total_dv01": aggregates.total_dv01,
-                    "krd_2y": aggregates.krd_2y,
-                    "krd_5y": aggregates.krd_5y,
-                    "krd_10y": aggregates.krd_10y,
-                    "krd_30y": aggregates.krd_30y,
-                },
-            )
-            st.download_button(
-                label="Download Excel",
-                data=excel_file,
-                file_name=f"portfolio_risk_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
         with col_info:
             st.caption(
@@ -533,24 +506,9 @@ def render_content(
 
 def main():
     """Main entry point."""
-    # ── Services ──
-    portfolio_service = PortfolioService(settings.security_master_url)
-    portfolios = portfolio_service.get_portfolios()
-
-    # ── Sidebar (stable — only reruns on user widget interaction) ──
-    active_filters, start_date, end_date, alert_manager, filters_manager = (
-        render_sidebar(portfolios)
-    )
-
-    # ── Main content (fragment reruns every 2s without touching sidebar) ──
-    @st.fragment(run_every=timedelta(seconds=settings.refresh_interval))
-    def live_content():
-        render_content(
-            active_filters, start_date, end_date, alert_manager,
-            filters_manager, portfolios, portfolio_service,
-        )
-
-    live_content()
+    # Auto-refresh using streamlit-autorefresh (avoids recursion issues)
+    st_autorefresh(interval=settings.refresh_interval * 1000, key="data_refresh")
+    render_dashboard()
 
 
 if __name__ == "__main__":

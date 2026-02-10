@@ -1,5 +1,6 @@
 # Dashboard
-streamlit>=1.37.0
+streamlit==1.31.0
+streamlit-autorefresh==1.0.1
 
 # Redis
 redis==5.0.1
