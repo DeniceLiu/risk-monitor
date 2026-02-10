@@ -6,6 +6,21 @@ import streamlit as st
 class ThemeManager:
     """Manages dashboard themes."""
 
+    # Anti-flash CSS - prevents white flash during auto-refresh
+    ANTI_FLASH_CSS = """
+    <style>
+        /* Prevent white flash during page refresh */
+        html, body {
+            background-color: #0e1117 !important;
+            transition: none !important;
+        }
+        
+        #root, .main, .block-container {
+            background-color: #0e1117 !important;
+        }
+    </style>
+    """
+
     LIVE_INDICATOR_CSS = """
     <style>
         .live-banner {
@@ -46,7 +61,7 @@ class ThemeManager:
     <style>
         /* Dark theme styles */
         .stApp {
-            background-color: #0e1117;
+            background-color: #0e1117 !important;
         }
 
         .metric-card {
@@ -76,7 +91,7 @@ class ThemeManager:
     <style>
         /* Light theme styles */
         .stApp {
-            background-color: #ffffff;
+            background-color: #ffffff !important;
         }
 
         .metric-card {
@@ -123,6 +138,9 @@ class ThemeManager:
 
     def apply_theme(self):
         """Apply selected theme and live indicator styles."""
+        # Apply anti-flash CSS first
+        st.markdown(self.ANTI_FLASH_CSS, unsafe_allow_html=True)
+        
         if st.session_state.theme == "dark":
             st.markdown(self.DARK_THEME, unsafe_allow_html=True)
         else:

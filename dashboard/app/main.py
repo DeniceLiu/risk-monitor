@@ -25,6 +25,21 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# Apply anti-flash CSS immediately to prevent white flash
+st.markdown("""
+<style>
+    /* Prevent white flash during auto-refresh */
+    html, body {
+        background-color: #0e1117 !important;
+        transition: none !important;
+    }
+    
+    .stApp {
+        background-color: #0e1117 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 
 def format_currency(value: float, decimals: int = 0) -> str:
     """Format a number as currency."""
