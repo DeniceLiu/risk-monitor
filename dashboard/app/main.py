@@ -221,14 +221,7 @@ def main():
                 refresh_count
             )
             
-            update_portfolio_breakdown(
-                containers.portfolio_breakdown,
-                trades_df,
-                portfolios,
-                selected_portfolio_id,
-                refresh_count
-            )
-            
+            # Holdings table first (with portfolio dropdown)
             update_holdings_table(
                 containers.holdings_table,
                 filtered_trades_df,
@@ -237,11 +230,20 @@ def main():
                 refresh_count
             )
             
-            # Update charts every refresh (they're fast enough)
+            # Risk analytics for selected portfolio (KRD + Risk distribution)
             update_risk_analytics(
                 containers.risk_analytics,
                 filtered_trades_df,
                 aggregates,
+                refresh_count
+            )
+            
+            # Portfolio breakdown charts (DV01 by portfolio, when viewing ALL)
+            update_portfolio_breakdown(
+                containers.portfolio_breakdown,
+                trades_df,
+                portfolios,
+                selected_portfolio_id,
                 refresh_count
             )
             
