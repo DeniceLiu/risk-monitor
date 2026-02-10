@@ -18,8 +18,7 @@ class DashboardContainers:
     alerts: st.delta_generator.DeltaGenerator
     summary_metrics: st.delta_generator.DeltaGenerator
     live_monitors: st.delta_generator.DeltaGenerator
-    holdings_table: st.delta_generator.DeltaGenerator
-    risk_analytics: st.delta_generator.DeltaGenerator
+    holdings_table: st.delta_generator.DeltaGenerator  # Now includes risk analytics
     portfolio_breakdown: st.delta_generator.DeltaGenerator
     concentration: st.delta_generator.DeltaGenerator
     heatmap: st.delta_generator.DeltaGenerator
@@ -39,13 +38,12 @@ def create_container_structure() -> DashboardContainers:
     2. Alerts (risk limit warnings)
     3. Summary metrics (total NPV, DV01, etc.)
     4. Live monitors (DV01 ticker + yield curve)
-    5. Holdings table (portfolio selector + data table)
-    6. Risk analytics (KRD profile + issuer distribution)
-    7. Portfolio breakdown (DV01 by portfolio charts)
-    8. Concentration (top risk contributors)
-    9. Heatmap (KRD by instrument)
-    10. Historical (time series charts)
-    11. Footer
+    5. Holdings table + Risk analytics (combined: portfolio selector + table + KRD + distribution)
+    6. Portfolio breakdown (DV01 by portfolio charts - separate section)
+    7. Concentration (top risk contributors)
+    8. Heatmap (KRD by instrument)
+    9. Historical (time series charts)
+    10. Footer
     
     Returns:
         DashboardContainers: Object containing all empty containers
@@ -55,8 +53,7 @@ def create_container_structure() -> DashboardContainers:
         alerts=st.empty(),
         summary_metrics=st.empty(),
         live_monitors=st.empty(),
-        holdings_table=st.empty(),
-        risk_analytics=st.empty(),
+        holdings_table=st.empty(),  # Now includes risk analytics
         portfolio_breakdown=st.empty(),
         concentration=st.empty(),
         heatmap=st.empty(),

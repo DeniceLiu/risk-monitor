@@ -206,13 +206,18 @@ def update_portfolio_breakdown(container, trades_df, portfolios, selected_portfo
             pass  # Empty container
 
 
-def update_holdings_table(container, filtered_trades_df, trades_df, portfolios, refresh_count):
-    """Update holdings table without reload."""
+def update_portfolio_holdings_and_analytics(container, trades_df, portfolios, aggregates, refresh_count):
+    """
+    Update combined portfolio holdings table + risk analytics under one dropdown.
+    
+    This merges the holdings table and risk analytics into a single section
+    with a shared portfolio selector that controls both views.
+    """
     with container.container():
         st.divider()
-        st.subheader("Portfolio Holdings")
+        st.subheader("Portfolio Holdings & Risk Analytics")
         
-        # Inline portfolio selector
+        # Shared portfolio selector (controls both table and analytics)
         hold_col1, hold_col2 = st.columns([1, 3])
         with hold_col1:
             table_portfolio_options = ["All Portfolios"]
@@ -229,15 +234,15 @@ def update_holdings_table(container, filtered_trades_df, trades_df, portfolios, 
                 "Select Portfolio",
                 options=table_portfolio_options,
                 index=default_idx,
-                key=f"holdings_portfolio_{refresh_count}",
+                key=f"portfolio_selector_{refresh_count}",
             )
             table_pid = table_portfolio_map.get(table_portfolio_choice, "ALL")
         
-        # Apply holdings-level filter
+        # Apply portfolio filter
         if table_pid != "ALL" and not trades_df.empty:
-            holdings_df = trades_df[trades_df["Portfolio ID"] == table_pid].copy() if "Portfolio ID" in trades_df.columns else filtered_trades_df
+            holdings_df = trades_df[trades_df["Portfolio ID"] == table_pid].copy() if "Portfolio ID" in trades_df.columns else trades_df
         else:
-            holdings_df = filtered_trades_df
+            holdings_df = trades_df
         
         if not holdings_df.empty:
             display_df = holdings_df.copy()
@@ -305,6 +310,56 @@ def update_holdings_table(container, filtered_trades_df, trades_df, portfolios, 
                 )
         else:
             st.info("No positions in selected portfolio or all filtered out")
+        
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # RISK ANALYTICS (for selected portfolio)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        
+        st.divider()
+        st.subheader("Risk Analytics")
+        
+        v1, v2 = st.columns(2)
+        with v1:
+            st.markdown("**Key Rate Duration Profile**")
+            if not holdings_df.empty:
+                # Calculate KRDs for selected portfolio
+                krd_2y = holdings_df["KRD 2Y"].sum() if "KRD 2Y" in holdings_df.columns else 0
+                krd_5y = holdings_df["KRD 5Y"].sum() if "KRD 5Y" in holdings_df.columns else 0
+                krd_10y = holdings_df["KRD 10Y"].sum() if "KRD 10Y" in holdings_df.columns else 0
+                krd_30y = holdings_df["KRD 30Y"].sum() if "KRD 30Y" in holdings_df.columns else 0
+                
+                krd_data = pd.DataFrame({
+                    "Tenor": ["2Y", "5Y", "10Y", "30Y"],
+                    "KRD": [krd_2y, krd_5y, krd_10y, krd_30y],
+                })
+                st.bar_chart(krd_data.set_index("Tenor"), use_container_width=True, color="#4CAF50")
+            else:
+                st.info("No data for selected portfolio")
+        
+        with v2:
+            st.markdown("**Risk Distribution by Issuer**")
+            if not holdings_df.empty:
+                dist_df = holdings_df.copy()
+                if "ISIN" in dist_df.columns:
+                    dist_df["Issuer"] = dist_df["ISIN"].apply(
+                        lambda x: extract_issuer_name(x) if x else "Unknown"
+                    )
+                else:
+                    dist_df["Issuer"] = dist_df.get("Instrument ID", "Unknown")
+                
+                if "Issuer" in dist_df.columns and "DV01" in dist_df.columns:
+                    dv01_by_issuer = dist_df[["Issuer", "DV01"]].copy()
+                    dv01_by_issuer["DV01 Abs"] = dv01_by_issuer["DV01"].abs()
+                    dv01_by_issuer = dv01_by_issuer.sort_values("DV01 Abs", ascending=False).head(20)
+                    st.bar_chart(
+                        dv01_by_issuer.set_index("Issuer")["DV01"],
+                        use_container_width=True,
+                        color="#2196F3",
+                    )
+                else:
+                    st.info("No risk data available")
+            else:
+                st.info("No data for selected portfolio")
 
 
 def update_risk_analytics(container, filtered_trades_df, aggregates, refresh_count):

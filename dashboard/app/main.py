@@ -19,8 +19,7 @@ from updaters import (
     update_summary_metrics,
     update_live_monitors,
     update_portfolio_breakdown,
-    update_holdings_table,
-    update_risk_analytics,
+    update_portfolio_holdings_and_analytics,
     update_concentration,
     update_heatmap,
     update_historical,
@@ -221,24 +220,16 @@ def main():
                 refresh_count
             )
             
-            # Holdings table first (with portfolio dropdown)
-            update_holdings_table(
+            # Holdings table + Risk analytics (combined under one dropdown)
+            update_portfolio_holdings_and_analytics(
                 containers.holdings_table,
-                filtered_trades_df,
                 trades_df,
                 portfolios,
-                refresh_count
-            )
-            
-            # Risk analytics for selected portfolio (KRD + Risk distribution)
-            update_risk_analytics(
-                containers.risk_analytics,
-                filtered_trades_df,
                 aggregates,
                 refresh_count
             )
             
-            # Portfolio breakdown charts (DV01 by portfolio, when viewing ALL)
+            # Portfolio breakdown charts (separate section, DV01 by portfolio)
             update_portfolio_breakdown(
                 containers.portfolio_breakdown,
                 trades_df,
