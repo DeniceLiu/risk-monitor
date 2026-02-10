@@ -461,13 +461,6 @@ This project is licensed under the MIT License - see [LICENSE](LICENSE) file for
 - *Interest Rate Derivatives* by Brigo & Mercurio
 - QuantLib Python Cookbook
 
----
-
-## 📞 Contact
-
-**Project Maintainer**: Risk Technology Team  
-**Email**: risk-tech@yourcompany.com  
-**Slack**: #risk-platform
 
 ---
 
