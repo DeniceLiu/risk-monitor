@@ -1,9 +1,10 @@
 # Risk Monitor Project - Context for Claude
 
 **Project:** Distributed Real-Time Fixed Income & Derivatives Risk Engine
-**Status:** ✅ COMPLETE - All 5 Phases Implemented
-**Approach:** Backend-first, incremental development
-**Dashboard:** http://localhost:8501
+**Status:** COMPLETE - All 5 Phases + V2 Dashboard Enhancements
+**Live:** https://risk-monitor.ngrok.app
+**Local:** http://localhost:8501
+**Repo:** https://github.com/DeniceLiu/risk-monitor
 
 ---
 
@@ -92,9 +93,33 @@ Security Master (FastAPI + PostgreSQL) ← Workers load portfolio at startup
   - [x] Auto-refresh every 2 seconds
   - [x] Docker container on port 8501
 
-### 🎉 PROJECT COMPLETE
+- [x] **V2 Dashboard Enhancements** (Completed 2026-02)
+  - [x] Live streaming indicator with pulsing badge
+  - [x] Table-first layout with issuer names (ISIN mapping)
+  - [x] Inline portfolio selector
+  - [x] Live yield curve visualization
+  - [x] Live DV01 sparkline monitor
+  - [x] Concentration risk analysis charts
+  - [x] KRD heatmap
+  - [x] Historical DV01/NPV time series
+  - [x] Dark/light theme toggle
+  - [x] Excel/CSV export
+  - [x] Risk alerts with configurable limits
 
-All 5 phases implemented. System is fully operational.
+- [x] **Portfolio & Real Bonds** (Completed 2026-02)
+  - [x] Portfolio routes in Security Master API
+  - [x] 27 real bonds seeded (US Treasury, Apple, Microsoft, JPMorgan, etc.)
+  - [x] Portfolio filtering in dashboard
+  - [x] Issuer name mapping utility
+
+- [x] **Cloud Deployment** (Completed 2026-02)
+  - [x] EC2 t3.medium instance
+  - [x] ngrok tunnel at risk-monitor.ngrok.app
+  - [x] systemd services for auto-restart
+
+### PROJECT COMPLETE
+
+All 5 phases + V2 enhancements implemented. System is live at risk-monitor.ngrok.app.
 
 ---
 
@@ -278,77 +303,11 @@ redis.expire(f"trade:{id}:risk", 3600)  # TTL
 
 ---
 
-## 🚀 Immediate Next Action
-
-**Create Phase 1 implementation document:**
-
-```
-File: docs/implementation/Phase_1_Infrastructure.md
-
-Contents should include:
-1. Overview
-   - Goals: Set up Docker Compose, PostgreSQL schema, directory structure
-   - Duration: Days 1-3
-   - Prerequisites: Docker Desktop, Python 3.11+
-
-2. Step-by-Step Instructions
-   - Create docker-compose.yml (with all services)
-   - Create project directory structure
-   - Create PostgreSQL schema
-   - Create .env file
-   - Start and verify services
-
-3. Detailed Code Examples
-   - Complete docker-compose.yml
-   - Database schema SQL
-   - Basic service scaffolding
-
-4. Testing & Validation
-   - Health check commands
-   - Service connectivity tests
-   - Acceptance criteria checklist
-
-5. Troubleshooting
-   - Common issues and solutions
-```
-
-**When user asks to begin Phase 1:**
-- Create the implementation document above
-- Guide step-by-step through setup
-- Validate each step before proceeding
-
----
-
 ## 📚 Reference Documents
 
-**For Architecture Questions:**
 - `docs/design/System_Design_Document.md` - Complete architecture
-- `docs/design/Architecture_Decision_Records.md` - Why we made each choice
-
-**For Project Overview:**
+- `docs/design/Architecture_Decision_Records.md` - Key decisions (ADRs)
 - `README.md` - Quick start and overview
-- `START_HERE.md` - Human-readable entry point
-
-**For Implementation:**
-- `docs/implementation/Phase_X_*.md` - Detailed guides (to be created)
-
----
-
-## 💡 Tips for Efficient Collaboration
-
-### When User Says:
-- **"Start Phase 1"** → Create Phase_1_Infrastructure.md, then guide through setup
-- **"Implement X"** → Check if implementation doc exists, create if needed, then code
-- **"Why did we choose Y?"** → Refer to Architecture_Decision_Records.md
-- **"How does Z work?"** → Refer to System_Design_Document.md
-- **"This isn't working"** → Check troubleshooting section, verify prerequisites
-
-### Best Practices:
-1. **Create implementation doc FIRST** before coding
-2. **Follow approved design** - don't improvise architecture
-3. **Test incrementally** - don't accumulate untested code
-4. **Update this file** when phase status changes
-5. **Ask for clarification** if design is ambiguous
 
 ---
 
@@ -424,7 +383,6 @@ Project complete when:
 
 ---
 
-**Last Updated:** 2026-01-28  
-**Current Phase:** Phase 1 - Infrastructure  
-**Next Action:** Create Phase 1 implementation document  
-**Status:** 🟢 Ready to implement
+**Last Updated:** 2026-02-09
+**Status:** COMPLETE - All phases + V2 + Cloud deployed
+**Live URL:** https://risk-monitor.ngrok.app
