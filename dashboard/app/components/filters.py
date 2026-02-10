@@ -3,13 +3,14 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
-from typing import Tuple, Dict, Any
+from typing import Tuple, Dict, Any, List, Optional
 
 
 class PortfolioFilters:
     """Manages dashboard filters."""
 
     DEFAULT_FILTERS = {
+        "portfolio": "ALL",
         "currencies": ["USD"],
         "instrument_types": ["BOND", "SWAP"],
         "maturity_min": 0,
@@ -41,14 +42,40 @@ class PortfolioFilters:
         if "pending_date_range" not in st.session_state:
             st.session_state.pending_date_range = self.DEFAULT_DATE_RANGE.copy()
 
-    def render_sidebar(self) -> Dict[str, Any]:
+    def render_sidebar(self, portfolios: Optional[List] = None) -> Dict[str, Any]:
         """
         Render filter controls in sidebar.
+
+        Args:
+            portfolios: List of Portfolio objects from PortfolioService
 
         Returns:
             dict: Currently applied filter selections
         """
         st.sidebar.header("Filters")
+
+        # Portfolio selector (prominent at top)
+        portfolio_options = ["ALL"]
+        portfolio_labels = {"ALL": "All Portfolios"}
+
+        if portfolios:
+            for p in portfolios:
+                portfolio_options.append(p.id)
+                portfolio_labels[p.id] = f"{p.name} ({p.bond_count})"
+
+        current_portfolio = st.session_state.pending_filters.get("portfolio", "ALL")
+        if current_portfolio not in portfolio_options:
+            current_portfolio = "ALL"
+
+        selected_portfolio = st.sidebar.selectbox(
+            "Portfolio",
+            options=portfolio_options,
+            index=portfolio_options.index(current_portfolio),
+            format_func=lambda x: portfolio_labels.get(x, x),
+            help="Select a portfolio to view",
+        )
+
+        st.sidebar.divider()
 
         # Currency filter
         currencies = st.sidebar.multiselect(
@@ -90,6 +117,7 @@ class PortfolioFilters:
 
         # Update pending filters with current selections
         st.session_state.pending_filters = {
+            "portfolio": selected_portfolio,
             "currencies": currencies if currencies else ["USD"],
             "instrument_types": instrument_types if instrument_types else ["BOND", "SWAP"],
             "maturity_min": maturity_range[0],
@@ -232,6 +260,16 @@ class PortfolioFilters:
             return df
 
         result = df.copy()
+
+        # Filter by portfolio (most important filter)
+        portfolio = filters.get("portfolio", "ALL")
+        if portfolio != "ALL":
+            # Use Portfolio ID column for filtering (contains the actual ID like "CREDIT_IG")
+            if "Portfolio ID" in result.columns:
+                result = result[result["Portfolio ID"] == portfolio]
+            elif "Portfolio" in result.columns:
+                # Fallback to Portfolio name column
+                result = result[result["Portfolio"] == portfolio]
 
         # Filter by currency (if column exists)
         if "Currency" in result.columns and filters.get("currencies"):

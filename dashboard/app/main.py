@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 import streamlit as st
 import pandas as pd
+from streamlit_autorefresh import st_autorefresh
 
 from config import settings
 from data import RiskDataFetcher, PortfolioService
@@ -505,9 +506,9 @@ def render_dashboard():
 
 def main():
     """Main entry point."""
+    # Auto-refresh using streamlit-autorefresh (avoids recursion issues)
+    st_autorefresh(interval=settings.refresh_interval * 1000, key="data_refresh")
     render_dashboard()
-    time.sleep(settings.refresh_interval)
-    st.rerun()
 
 
 if __name__ == "__main__":
